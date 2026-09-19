@@ -15,7 +15,7 @@
 | 文件 | 作用 |
 | --- | --- |
 | `index.js` | Host 半边：注册 `GET /dsh-shutdown-button/api/status` 与 `POST /dsh-shutdown-button/api/shutdown` 两条本机路由 |
-| `lib/client.js` | Client 半边：向 `settings.section` 注册「关机」页（手写 loader 格式，不走打包器） |
+| ~~`lib/client.js`~~ | 客户端半边**已删除**：UI 并入 dsh-extras 设置页「通用插件设置」的第二段（旧实现见 Git 历史） |
 | `package.json` | 声明 `dsh.client.platform = web` 与要注入的客户端包 |
 
 安全上：`POST /shutdown` 要求「带 Origin 的请求必须与 Host 同源」，挡掉别的网页偷偷

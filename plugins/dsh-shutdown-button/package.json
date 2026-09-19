@@ -8,12 +8,10 @@
   "license": "MIT",
   "exports": {
     ".": "./index.js",
-    "./client": "./lib/client.js",
     "./package.json": "./package.json"
   },
   "files": [
     "index.js",
-    "lib",
     "README.md"
   ],
   "keywords": [

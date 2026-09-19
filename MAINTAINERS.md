@@ -72,7 +72,7 @@ powershell -File scripts/install.ps1 -SetDefault   # 装 preset + 接 profile，
 **UI 归组，能力归成员**：三个成员仍然各自发布自己的 HTTP 路由（host 半边没动），
 设置页只是它们的客户端门面。所以两个按钮原来的客户端注册点已撤掉 ——
 重启键不再挂侧栏（`sidebar.footer.action`），关机键不再单独占一行设置页
-（`settings.section`），它们的 `lib/client.js` 保留作参考但**已不再被声明为客户端插件**
+（`settings.section`）。它们的客户端半边**已删除**：manifest 里的 `dsh.client` 早已移除，
 （manifest 里的 `dsh.client` 已移除），因此不会加载。
 
 那一页原本还有第三段「安装 / 刷新接线」（宿主路由 `/dsh-extras/api/*`），**已按需移除**：
@@ -180,7 +180,7 @@ Remove-Item -Recurse -Force "$env:USERPROFILE\.dsh\.agent-presets\standard-extra
 
 `plugins/dsh-restart-button/package.json` 里的 `dsh.bundle` 已被移除（否则 `dsh plugin` 的
 reconcile 会在下次安装时把它重新加回 bundle 列表，造成同一 id 被两层各 insert 一次）。
-它自带的 `cordis.patch.yml` 仍保留，需要单独装时手工 insert 即可。
+需要单独装它时，按 `cordis.patch.yml` 里现成的 insert 片段手工加一行即可（该文件已随死代码清理删除，旧内容见 Git 历史）。
 
 ## 注意（Windows PowerShell 5.1）
 
@@ -287,6 +287,18 @@ git push -u origin main
 3. **你重启 dsh** —— agent 一旦触发重启，它自己那个回合就被掐断，所以这一步必须你来；
 4. agent 再跑 `powershell -File dsh-extras\scripts\verify.ps1`（28 项）并弹一张带图卡片确认。
 
+
+另外两个 Node 侧冒烟测试不依赖 harness，任何装了 Node 的机器都能跑（CI 也会跑，见 `.github/workflows/smoke.yml`）：
+
+
+```powershell
+
+node smoke-client.mjs                        # 设置页客户端 bundle（两段状态机逐分支）
+
+node plugins\ask-detail\smoke-host.mjs       # 图片插件：零依赖 + detail 转发 + 参数校验
+
+```
+
 私有仓库要先给 git 凭据（token 或 SSH key）；公开仓库直接 clone 即可。
 
 ### 提交前留意
@@ -294,8 +306,8 @@ git push -u origin main
 - `.ps1` 必须保住 UTF-8 **BOM**（`EF BB BF`），否则 PS 5.1 按 ANSI 解析、中文乱码并破坏字面量；
 - 文档里有若干 `C:\Users\<用户名>\...` 的**示例路径**：本地用着方便，仓库若要公开，
   建议换成 `<仓库目录>` 之类的占位符；
-- `plugins/*/lib/client.js` 里有两个**已退役**的客户端半边（UI 已并入组的设置页），
-  保留作参考，不要误以为它们还在加载 —— manifest 里的 `dsh.client` 已经移除。
+- `plugins/*/lib/client.js` 那两个**已退役**的客户端半边已删除（UI 已并入组的设置页）；旧实现见 Git 历史，
+  （`settings.section`）。它们的客户端半边**已删除**：manifest 里的 `dsh.client` 早已移除，
 
 
 

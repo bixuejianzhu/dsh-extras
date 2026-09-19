@@ -1,0 +1,23 @@
+name: smoke
+
+# 这两个测试不依赖 dsh/harness：客户端 bundle 测试是纯 Node，
+# host 侧测试在找不到 dsh-tools 时会自动跳过 schema 校验那一步。
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  node-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: 设置页客户端 bundle（两段状态机逐分支）
+        run: node smoke-client.mjs
+
+      - name: 选项卡显示图片插件（零依赖 / detail 转发 / 参数校验）
+        run: node plugins/ask-detail/smoke-host.mjs

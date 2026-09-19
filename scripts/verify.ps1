@@ -158,6 +158,28 @@ foreach ($route in @('dsh-shutdown-button', 'dsh-restart-button')) {
   }
 }
 
+# ── 4. 启动器自愈 ────────────────────────────────────────────────────────────
+Section '启动器自愈（~/.dsh 的启动脚本）'
+$trayPath = Join-Path $dshHome 'dsh-tray.ps1'
+$cmdPath  = Join-Path $dshHome 'launch-dsh-web.cmd'
+if (Test-Path $trayPath) {
+  Check ((Read-Text $trayPath).Contains('function Invoke-ExtrasInstaller')) 'dsh-tray.ps1 已注入启动前自愈'
+} else {
+  Write-Host '  [skip] 没有 dsh-tray.ps1（这台机器的启动方式不同）'
+}
+if (Test-Path $cmdPath) {
+  Check ((Read-Text $cmdPath).Contains('dsh-extras self-heal')) 'launch-dsh-web.cmd 已注入启动前自愈'
+} else {
+  Write-Host '  [skip] 没有 launch-dsh-web.cmd'
+}
+$extrasLog = Join-Path $dshHome 'dsh-extras-install.log'
+if (Test-Path $extrasLog) {
+  $li = Get-Item $extrasLog
+  Write-Host ('  [info] 自愈日志：{0} 字节，最后写入 {1}' -f $li.Length, $li.LastWriteTime)
+} else {
+  Write-Host '  [info] 自愈日志尚未生成（用快捷方式/托盘冷启动一次就会出现）'
+}
+
 Section '结论'
 Write-Host "PASS=$pass  FAIL=$fail"
 if ($fail -eq 0) {

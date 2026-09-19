@@ -8,14 +8,11 @@
   "license": "MIT",
   "exports": {
     ".": "./index.js",
-    "./client": "./lib/client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "files": [
     "index.js",
-    "lib",
-    "cordis.patch.yml",
     "README.md"
   ],
   "keywords": [
