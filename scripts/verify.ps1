@@ -133,7 +133,7 @@ foreach ($name in @('dsh-restart-button', 'dsh-shutdown-button')) {
   Check ($null -eq $pkg.dsh.client) "$name 不再声明 dsh.client（UI 已并入组）"
 }
 
-# 组自己带客户端半边（设置页「通用插件设置」）与安装器（一键安装按钮）
+# 组自己带客户端半边（设置页「通用插件设置」）与安装器（启动器自愈与 install.cmd 要用）
 $groupNm = Join-Path $profileNm 'dsh-extras'
 if (Test-Path (Join-Path $groupNm 'package.json')) {
   $groupPkg = Read-Json (Join-Path $groupNm 'package.json')

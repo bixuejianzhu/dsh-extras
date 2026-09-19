@@ -6,11 +6,12 @@
 #
 # 为什么本组必须 insert 自己：bundle 的 package.json 只被用来找补丁层
 # （dsh.bundle.patch），它的 main/index.js **不会自动运行**。少了 id: dsh-extras 这一行：
-#   - 宿主半边不会挂上 —— 设置页要用的 /dsh-extras/api/status 与 /api/install 都是 404；
-#   - 客户端半边也不会被扫到 —— @deepseek-ai/dsh-client-modules 是按 **Loader 的行**
+#   - 客户端半边不会被扫到 —— @deepseek-ai/dsh-client-modules 是按 **Loader 的行**
 #     找 `dsh.client` 声明的（源码注释：scans the host Loader's entries for packages
 #     declaring `dsh.client`），没挂载就没人看，设置里那一页就不会出现。
-# 这两条是同一个根因，踩过一次。
+# 宿主半边如今不注册任何东西 —— 早先的两条 /dsh-extras/api/* 路由（status 与 install）
+# 已随设置页的「一键安装」段一并移除，apply() 是空的。所以这一行今天唯一的用处，就是
+# 上面那条扫描的入口：行在，dsh.client 才有人看。踩过一次，别再删。
 #
 # 作用域分工（架构约束，不是偷懒）：
 #   - 本组 + 重启 / 关机按钮挂在 **profile（host）作用域** —— 它们发布 HTTP 路由、

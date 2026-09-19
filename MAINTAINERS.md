@@ -12,12 +12,12 @@ dsh-extras\
   package.json          组的清单（dsh.bundle + dsh.client 两个声明）
   cordis.patch.yml      组的补丁层：insert 本组自己 + 两个按钮成员
   index.js              空壳宿主半边（存在的意义：让 dsh.client 声明被扫到）
-  lib\client.js         组的客户端半边（设置页「通用插件设置」三段）
+  lib\client.js         组的客户端半边（设置页「通用插件设置」两段）
   install.cmd           双击入口（新机器首次引导）
   smoke-client.mjs      客户端 bundle 的 Node 冒烟测试
   scripts\install.ps1   安装器：生成 preset + 接 profile（幂等；也负责搬迁后重指向）
   scripts\verify.ps1    自检：四层检查 + 路由探测
-  scripts\test-installer.ps1  安装器自身的本地回归测试（假 $DSH_HOME，24 项断言）
+  scripts\test-installer.ps1  安装器自身的本地回归测试（假 $DSH_HOME，27 项断言）
   plugins\
     ask-detail\             选项卡显示图片插件（由 agent preset 挂载）
     dsh-restart-button\     重启按钮（host 能力）
@@ -63,18 +63,18 @@ powershell -File scripts/install.ps1 -SetDefault   # 装 preset + 接 profile，
 ## 设置页「通用插件设置」
 
 本组自己带一个客户端 bundle（`lib/client.js`），在设置面板里注册一页**「通用插件设置」**，
-页内自上而下三段：
+页内自上而下两段：
 
 | 段落 | 能力来自 | 路由 |
 |---|---|---|
 | 重启 DSH | `dsh-restart-button` | 读 `/dsh-restart-button/api/status`，POST dsh-market 的 `/dsh-market/api/v1/restart` |
 | 关闭 DSH | `dsh-shutdown-button` | `/dsh-shutdown-button/api/status` + `/api/shutdown` |
 
-**UI 归组，能力归成员**：三个成员仍然各自发布自己的 HTTP 路由（host 半边没动），
+**UI 归组，能力归成员**：两个按钮成员仍然各自发布自己的 HTTP 路由（各自的 host 半边没动），
 设置页只是它们的客户端门面。所以两个按钮原来的客户端注册点已撤掉 ——
 重启键不再挂侧栏（`sidebar.footer.action`），关机键不再单独占一行设置页
 （`settings.section`）。它们的客户端半边**已删除**：manifest 里的 `dsh.client` 早已移除，
-（manifest 里的 `dsh.client` 已移除），因此不会加载。
+因此不会加载。
 
 那一页原本还有第三段「安装 / 刷新接线」（宿主路由 `/dsh-extras/api/*`），**已按需移除**：
 同一职责改由**启动器自愈**承担 —— `dsh-tray.ps1` 与 `launch-dsh-web.cmd` 在起 dsh 之前会先跑一次
@@ -171,7 +171,7 @@ profile 接线（bundles 列表、三个成员的 junction 与 `link:` 依赖、
 外加两项守卫：profile 的 JSON/YAML 不带 BOM、所有读取都走 UTF-8 安全 API。
 
 改过 `install.ps1` 的注入 / junction 逻辑后，再跑一次它自带的本地回归测试 —— 它在临时目录里
-造一套假 `$DSH_HOME` 与假启动器，不动真东西（24 项断言）：
+造一套假 `$DSH_HOME` 与假启动器，不动真东西（27 项断言）：
 
 ```powershell
 powershell -File scripts/test-installer.ps1
@@ -187,7 +187,11 @@ dsh --profile web --dump-config | Select-String 'dsh-extras|dsh-restart-button|d
 
 最后一项只有人能确认：新会话里让模型弹一张带 `detail` 图片的提问卡片，看图片是否显示。
 
-`verify.ps1` 和 `install.ps1` 一样含中文，必须保有 UTF-8 BOM。
+`verify.ps1` 和 `install.ps1` 一样含中文，必须保有 UTF-8 BOM —— 这条不变量由
+`test-installer.ps1` 的 case 6 强制：仓库里任何含非 ASCII 字节的 `.ps1` 一旦没有 BOM 就 FAIL，
+另有一条断言防止该扫描因改名/改过滤器而「什么都没查却全绿」。踩过一次：某个会重写文件的工具
+吞掉了 `verify.ps1` 的 BOM，PS 5.1 随即按 ANSI 解析并报 `The string is missing the terminator`。
+纯 ASCII 的脚本（`test-installer.ps1` 自己就是）不需要 BOM。
 
 ## 回滚
 
