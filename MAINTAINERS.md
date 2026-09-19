@@ -11,7 +11,7 @@
 dsh-extras\
   package.json          组的清单（dsh.bundle + dsh.client 两个声明）
   cordis.patch.yml      组的补丁层：insert 本组自己 + 两个按钮成员
-  index.js              组的宿主半边（设置页的 /dsh-extras/api/status 与 /api/install）
+  index.js              空壳宿主半边（存在的意义：让 dsh.client 声明被扫到）
   lib\client.js         组的客户端半边（设置页「通用插件设置」三段）
   install.cmd           双击入口（新机器首次引导）
   smoke-client.mjs      客户端 bundle 的 Node 冒烟测试
@@ -68,7 +68,6 @@ powershell -File scripts/install.ps1 -SetDefault   # 装 preset + 接 profile，
 |---|---|---|
 | 重启 DSH | `dsh-restart-button` | 读 `/dsh-restart-button/api/status`，POST dsh-market 的 `/dsh-market/api/v1/restart` |
 | 关闭 DSH | `dsh-shutdown-button` | `/dsh-shutdown-button/api/status` + `/api/shutdown` |
-| 安装 / 刷新接线 | `dsh-extras` 自己 | `/dsh-extras/api/status` + `/dsh-extras/api/install` |
 
 **UI 归组，能力归成员**：三个成员仍然各自发布自己的 HTTP 路由（host 半边没动），
 设置页只是它们的客户端门面。所以两个按钮原来的客户端注册点已撤掉 ——
@@ -76,16 +75,13 @@ powershell -File scripts/install.ps1 -SetDefault   # 装 preset + 接 profile，
 （`settings.section`），它们的 `lib/client.js` 保留作参考但**已不再被声明为客户端插件**
 （manifest 里的 `dsh.client` 已移除），因此不会加载。
 
-一键安装按钮做的是「重跑 `scripts/install.ps1 -SetDefault`」，用宿主路由执行：脚本路径由
-`import.meta.url` 推出、参数写死、**不接受任何请求参数**（没有注入面），写操作另加同源校验；
-并发跑两次会被拒（409）。**鸡生蛋**：这个按钮本身要靠插件组已挂载才存在，所以新机器上
-第一次仍然得用：
+那一页原本还有第三段「安装 / 刷新接线」（宿主路由 `/dsh-extras/api/*`），**已按需移除**：
+同一职责改由**启动器自愈**承担 —— `dsh-tray.ps1` 与 `launch-dsh-web.cmd` 在起 dsh 之前会先跑一次
+`scripts/install.ps1 -SetDefault`（幂等、约 2 秒；失败只记日志、不阻塞启动，输出写进
+`$DSH_HOME/dsh-extras-install.log`）。
 
-```
-双击 dsh-extras\install.cmd        （或 powershell -File scripts\install.ps1 -SetDefault）
-```
-
-之后升级 dsh、换过路径、想修接线时，用设置里那个按钮就够了。
+为什么这样更好：安装器修的是**启动时才组合**的 preset 与 junction，「点按钮立刻修好」本来也躲不过
+一次重启；而自愈正好发生在你需要的那次重启之前 —— 不必点按钮、不必开终端、也不必叫 agent。
 
 客户端 bundle 的冒烟测试在 Node 里跑（桩掉 loader 与 react，逐段强制状态、逐分支渲染）：
 
@@ -212,14 +208,14 @@ param([string]$R = $PSScriptRoot)   # 没有 CmdletBinding 就正常
 ### 坑二：宿主里 spawn 子进程，两个都不能想当然
 
 1. **`pwsh` 不在 PATH 里**（这台机器只有系统自带的 `powershell.exe` 5.1）。
-   写死 `spawn('pwsh')` 会 ENOENT，表现出来就是「一键安装报 500」。现在按候选表
+   写死 `spawn('pwsh')` 会 ENOENT。现在按候选表
    逐个尝试，首选**绝对路径** `%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe`。
 2. **不要用管道 stdio 抓输出**：DSH 沙箱明确禁止（Node `child_process` 默认
    `stdio:'pipe'` 会 EPERM）。宿主进程本身通常不受限，但平台差异不值得赌 ——
    现在把 stdout/stderr 指向临时日志文件（`stdio: ['ignore', fd, fd]`），退出后读回来，
    在沙箱内也实测可用。
 
-这两条都出现在 `/dsh-extras/api/install` 的实现里，改那边时别退回老写法。
+这两条现在出现在**启动器自愈**里（`dsh-tray.ps1` 的 `Invoke-ExtrasInstaller`，以及 `launch-dsh-web.cmd`），改那边时别退回老写法。
 
 ### 坑三：别用嵌套数组字面量当「旧文本 → 新文本」查找表
 
@@ -259,7 +255,7 @@ UTF-8，BOM 被抹掉就回到坑一（PS 5.1 按 ANSI 解析，中文乱码并�
 cd <本目录>
 git init -b main
 git add -A
-git commit -m "dsh-extras: 插件组（重启 / 关机 / 选项卡显示图片 + 一键安装）"
+git commit -m "dsh-extras: 插件组（重启 / 关机 / 选项卡显示图片 + 启动器自愈）"
 ```
 
 推到自己的远程（先在 GitHub 建**空**仓库，不要勾 README/.gitignore）：
@@ -300,3 +296,21 @@ git push -u origin main
 - `plugins/*/lib/client.js` 里有两个**已退役**的客户端半边（UI 已并入组的设置页），
   保留作参考，不要误以为它们还在加载 —— manifest 里的 `dsh.client` 已经移除。
 
+
+
+### 坑四：`File.ReadAllText` 会吃掉 BOM —— 写回时丢了 BOM 就等于把文件改坏
+
+改 `dsh-tray.ps1` 时踩过。`[IO.File]::ReadAllText($p, UTF8Encoding($false))` 会**自动跳过开头的 BOM**，
+所以「读进来再检查第一个字符是不是 U+FEFF」永远得到"没有 BOM"；若随后用无 BOM 编码写回，BOM 就被抹掉 ——
+而 PS 5.1 读没有 BOM 的 `.ps1` 时按 ANSI 解析，中文立刻乱码、脚本直接解析失败。**这条正是坑一的隐蔽触发方式。**
+结论：处理带中文的 `.ps1` 时，读用 `UTF8Encoding($false)`、**写必须显式用 `UTF8Encoding($true)`**；
+改完务必核对前三个字节仍是 `EF BB BF`。
+
+### 坑五：`Remove-Item -Recurse` 遇到 junction 可能删掉**目标目录里的真东西**
+
+PS 5.1 的 `Remove-Item -Recurse -Force` 作用在含 junction 的目录上时，有递归进链接目标、把真包内容
+一起删掉的风险。清理 preset 里旧 `node_modules` junction 时因此改用 .NET：
+
+```powershell
+[System.IO.Directory]::Delete($link, $false)   # 只删链接本身，不递归
+```

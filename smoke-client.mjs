@@ -127,7 +127,7 @@ const page = renderWith('section', mod.ExtrasSection, []);
 assert.ok(page.text.includes('通用插件设置'), 'FAIL: 页面标题缺失');
 assert.ok(page.text.includes('重启 DSH'), 'FAIL: 缺第一段（重启）');
 assert.ok(page.text.includes('关闭 DSH'), 'FAIL: 缺第二段（关机）');
-assert.ok(page.text.includes('安装 / 刷新接线'), 'FAIL: 缺第三段（安装）');
+assert.ok(!page.text.includes('安装 / 刷新接线'), 'FAIL: 一键安装那一段应当已被移除');
 
 // --- 6. 第一段：重启 ---------------------------------------------------------
 const restartOk = { ok: true, available: true, reason: null, bootId: '1-1' };
@@ -178,37 +178,8 @@ assert.ok(r.buttons.includes('正在关机…'), 'FAIL: 进行中应显示进度
 r = renderWith('shutdown/error', mod.ShutdownBlock, ['error', shutdownOk, '跨站请求被拒绝', 0]);
 assert.ok(r.text.includes('关机失败：跨站请求被拒绝'), 'FAIL: 错误态应显示原因');
 
-// --- 8. 第三段：安装 ---------------------------------------------------------
-const installOk = { ok: true, installer: 'C:/x/install.ps1', installerExists: true, lastRun: null, running: false };
-r = renderWith('install/checking', mod.InstallBlock, ['checking', null, '', '', 0]);
-assert.ok(r.text.includes('正在检查安装器'), 'FAIL: checking 态应说明在做什么');
-
-r = renderWith('install/broken', mod.InstallBlock, ['idle', { ok: true, installer: 'C:/gone/install.ps1', installerExists: false }, '', '', 0]);
-assert.ok(r.text.includes('安装器不可用'), 'FAIL: 找不到脚本时应直说');
-
-r = renderWith('install/idle', mod.InstallBlock, ['idle', installOk, '', '', 0]);
-assert.ok(r.buttons.includes('运行安装器'), 'FAIL: 可用时应给运行按钮');
-assert.ok(r.text.includes('install.ps1'), 'FAIL: 应显示安装器路径');
-
-r = renderWith('install/last-run', mod.InstallBlock, ['idle', Object.assign({}, installOk, { lastRun: { at: '2026-09-20T00:00:00Z', ok: false, code: 1, spawnError: false } }), '', '', 0]);
-assert.ok(r.text.includes('上次运行'), 'FAIL: 有历史时应显示上次结果');
-
-r = renderWith('install/confirm', mod.InstallBlock, ['confirm', installOk, '', '', 0]);
-assert.ok(r.buttons.includes('确认运行'), 'FAIL: 确认态缺确认按钮');
-assert.ok(r.buttons.includes('取消'), 'FAIL: 确认态缺取消');
-
-r = renderWith('install/running', mod.InstallBlock, ['running', installOk, '正在运行安装器', '', 0]);
-assert.ok(r.buttons.includes('正在运行…'), 'FAIL: 进行中应禁用按钮');
-
-r = renderWith('install/done', mod.InstallBlock, ['done', installOk, '安装器已跑完 —— 重启 dsh 后新配置才生效。', '', 0]);
-assert.ok(r.text.includes('重启 dsh 后'), 'FAIL: 成功态应提示需要重启');
-
-r = renderWith('install/error', mod.InstallBlock, ['error', installOk, '找不到安装器：C:/gone', 'stdout tail', 0]);
-assert.ok(r.text.includes('安装失败：找不到安装器'), 'FAIL: 错误态应显示原因');
-assert.ok(r.text.includes('stdout tail'), 'FAIL: 错误态应回显脚本输出');
-
 // 重启后的自动刷新路径：window.location.reload 必须存在且可调用
 assert.equal(reloadCalls, 0, 'FAIL: 渲染阶段不应触发页面刷新');
 assert.equal(typeof globalThis.window.location.reload, 'function', 'FAIL: 需要 location.reload 才能在新进程接管后自动刷新');
 
-console.log('PASS: 注册面、三段状态机的每个分支、以及页面标题与三个入口都成立');
+console.log('PASS: 注册面、两段状态机的每个分支、以及页面标题与两个入口都成立');

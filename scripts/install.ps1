@@ -100,8 +100,6 @@ if (Test-Path $agentPresetsLink) { $installedPkgsDir = Split-Path -Parent (Get-I
 if (-not $installedPkgsDir -or -not (Test-Path $installedPkgsDir)) {
   throw "无法从 $agentPresetsLink 解析当前安装在用的 @deepseek-ai 目录；先启动一次 dsh 让 junction 生成"
 }
-$dshToolsDir = Join-Path $installedPkgsDir 'dsh-tools'
-if (-not (Test-Path $dshToolsDir)) { throw "在安装目录里找不到 dsh-tools: $dshToolsDir" }
 Write-Host "harness home : $dshHome"
 Write-Host "当前安装     : $installedPkgsDir"
 
@@ -161,7 +159,7 @@ if (-not $SkipPreset) {
   }
   Remove-Item -LiteralPath $stash -Recurse -Force -ErrorAction SilentlyContinue
 
-  # 插件本体：从组目录复制进 preset，让 preset 自带依赖
+  # 插件本体：从组目录复制进 preset（插件已零依赖，preset 里不需要任何 node_modules）
   $pluginSrc = Join-Path $GroupDir 'plugins\ask-detail'
   $pluginDst = Join-Path $presetDir 'plugins\ask-detail'
   New-Item -ItemType Directory -Force -Path $pluginDst | Out-Null
@@ -170,8 +168,18 @@ if (-not $SkipPreset) {
     if (Test-Path $from) { Copy-Item -LiteralPath $from -Destination $pluginDst -Force }
   }
 
-  # 插件 import 的 @deepseek-ai/dsh-tools：junction 进 preset 目录
-  New-Junction (Join-Path $presetDir 'node_modules\@deepseek-ai\dsh-tools') $dshToolsDir
+  # 清掉旧版本留下的 node_modules/junction（那时插件还 import @deepseek-ai/dsh-tools）。
+  # 插件现在零依赖，而那种 junction 指向带 node 版本槽的安装路径、升级后本来就会断。
+  # ⚠️ 必须用 .NET 删链接本身：PS 5.1 的 Remove-Item -Recurse 遇到 junction 有递归进目标
+  #    目录、把真包内容一起删掉的风险。
+  $legacyLink = Join-Path $presetDir 'node_modules\@deepseek-ai\dsh-tools'
+  if (Test-Path $legacyLink) {
+    [System.IO.Directory]::Delete($legacyLink, $false)
+    Write-Host '已清理 preset 里旧的 dsh-tools junction（插件现已零依赖）'
+    foreach ($dir in @((Join-Path $presetDir 'node_modules\@deepseek-ai'), (Join-Path $presetDir 'node_modules'))) {
+      if (Test-Path $dir) { try { [System.IO.Directory]::Delete($dir, $false) } catch { } }
+    }
+  }
 
   # 改行：tool-ask-user 的 name → 相对 preset 目录的路径（classifyRowSpecifier: '.' 前缀按 preset 基解析）
   $composition = Join-Path $presetDir 'agent.cordis.yml'

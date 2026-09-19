@@ -78,17 +78,17 @@ if (Test-Path $composition) {
   }
 }
 Check (Test-Path (Join-Path $pluginDir 'index.js')) "插件文件存在：plugins\ask-detail\index.js"
-$toolsLink = Join-Path $presetDir 'node_modules\@deepseek-ai\dsh-tools'
-if (Test-Path $toolsLink) {
-  Ok "dsh-tools junction 存在 -> $((Get-Item $toolsLink).Target)"
-} else {
-  Bad "缺少 dsh-tools junction（插件 import 会失败）；重跑 install.ps1"
-}
+# 插件已改为**零依赖**：preset 里不该再有 node_modules（旧版本留下的 junction 由安装器清掉）。
+# 这一条同时守住 B 方案：插件不 import，就不会因 dsh 升级换 node 版本槽而断链。
+$legacyLink = Join-Path $presetDir 'node_modules\@deepseek-ai\dsh-tools'
+Check (-not (Test-Path $legacyLink)) "preset 里没有残留的 dsh-tools junction（插件已零依赖）"
+$pluginText = Read-Text (Join-Path $pluginDir 'index.js')
+Check (([regex]::Matches($pluginText, '(?m)^\s*import\s')).Count -eq 0) "插件源码零 import（不依赖 node_modules）"
 
 if (Test-Path (Join-Path $pluginDir 'index.js')) {
   $url = 'file:///' + ((Join-Path $pluginDir 'index.js') -replace '\\', '/')
   $out = & node --input-type=module -e "await import('$url').then(m => console.log('plugin ok ' + Object.keys(m).join(',')))" 2>&1
-  Check ($LASTEXITCODE -eq 0 -and ($out -join ' ') -like '*plugin ok*') "插件可 import（含 @deepseek-ai/dsh-tools 解析）：$($out -join ' ')"
+  Check ($LASTEXITCODE -eq 0 -and ($out -join ' ') -like '*plugin ok*') "插件可 import（零依赖，无需 node_modules）：$($out -join ' ')"
 }
 
 # ── 2. profile 作用域 ────────────────────────────────────────────────────────
@@ -139,7 +139,7 @@ if (Test-Path (Join-Path $groupNm 'package.json')) {
   $groupPkg = Read-Json (Join-Path $groupNm 'package.json')
   Check ($null -ne $groupPkg.dsh.client -and $groupPkg.dsh.client.platform -eq 'web') "组声明了 dsh.client.platform = web（设置页客户端半边）"
   Check (Test-Path (Join-Path $groupNm 'lib\client.js')) "组的客户端 bundle 存在：lib\client.js"
-  Check (Test-Path (Join-Path $groupNm 'scripts\install.ps1')) "组的安装器存在：scripts\install.ps1（一键安装按钮要用）"
+  Check (Test-Path (Join-Path $groupNm 'scripts\install.ps1')) "组的安装器存在：scripts\install.ps1（启动器自愈与 install.cmd 要用）"
 } else {
   Bad '组的 package.json 通过 profile 不可达'
 }
@@ -147,7 +147,7 @@ if (Test-Path (Join-Path $groupNm 'package.json')) {
 # ── 3. 运行中的宿主 ──────────────────────────────────────────────────────────
 Section "运行中的宿主（127.0.0.1:$Port）"
 
-foreach ($route in @('dsh-shutdown-button', 'dsh-restart-button', 'dsh-extras')) {
+foreach ($route in @('dsh-shutdown-button', 'dsh-restart-button')) {
   $url = "http://127.0.0.1:$Port/$route/api/status"
   try {
     $r = Invoke-WebRequest -Uri $url -UseBasicParsing -TimeoutSec 5
