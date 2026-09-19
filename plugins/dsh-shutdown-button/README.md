@@ -26,7 +26,7 @@ POST 关掉你的 dsh；没有 Origin 的客户端（curl 等）放行。
 **正常路径**：本包已是 `dsh-extras` 插件组的成员，挂载由组统一负责，跑一次组安装器即可：
 
 ```powershell
-pwsh -File C:\Users\Lenovo\Documents\work\dsh-extras\scripts\install.ps1
+powershell -File <仓库目录>\scripts\install.ps1
 ```
 
 安装器会为本包在 `profiles\web\node_modules` 建 junction、在 profile 清单里写 `link:` 依赖；
@@ -44,7 +44,7 @@ pwsh -File C:\Users\Lenovo\Documents\work\dsh-extras\scripts\install.ps1
 <details>
 <summary>脱离插件组单独安装（手工步骤，仅备查）</summary>
 
-1. 本包位于 `C:\Users\Lenovo\Documents\work\dsh-extras\plugins\dsh-shutdown-button`。
+1. 本包位于 `<仓库目录>\plugins\dsh-shutdown-button`。
 2. profile 的 `...\profiles\web\package.json` 里加一条依赖，然后二选一让 `node_modules`
    里出现软链接（`link:` 依赖在 pnpm 下生成的本来就是 junction，两种做法等价）：
    - 在 profile 目录执行一次 `pnpm install`；或
@@ -52,12 +52,12 @@ pwsh -File C:\Users\Lenovo\Documents\work\dsh-extras\scripts\install.ps1
 
      ```powershell
      New-Item -ItemType Junction `
-       -Path   'C:\Users\Lenovo\.dsh\profiles\web\node_modules\dsh-shutdown-button' `
-       -Target 'C:\Users\Lenovo\Documents\work\dsh-extras\plugins\dsh-shutdown-button'
+       -Path   "$env:USERPROFILE\.dsh\profiles\web\node_modules\dsh-shutdown-button" `
+       -Target '<仓库目录>\plugins\dsh-shutdown-button'
      ```
 
    ```json
-   "dsh-shutdown-button": "link:C:/Users/Lenovo/Documents/work/dsh-extras/plugins/dsh-shutdown-button"
+   "dsh-shutdown-button": "link:<仓库目录>/plugins/dsh-shutdown-button"
    ```
 3. 在需要它的那一层 insert 上面那段 `insert`（profile 的 `cordis.patch.yml`，或某个 bundle
    的补丁层）。profile 补丁层受 `patchReload: live` 监听，改完即时生效、不用重启。
@@ -86,7 +86,7 @@ profile 配置一旦带上 UTF-8 BOM，**dsh 会直接起不来**（双击桌面
 自查某个文件有没有 BOM：
 
 ```powershell
-$b = [System.IO.File]::ReadAllBytes('C:\Users\Lenovo\.dsh\profiles\web\package.json')
+$b = [System.IO.File]::ReadAllBytes("$env:USERPROFILE\.dsh\profiles\web\package.json")
 if ($b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF) { '有 BOM，要修' } else { '无 BOM' }
 ```
 
@@ -99,7 +99,7 @@ Invoke-WebRequest 'http://127.0.0.1:3080/dsh-shutdown-button/api/status' -UseBas
 # 期望：{"ok":true,"canShutdown":true,"reason":null,"pid":...,"port":3080,...}
 
 # 两个 profile 文件能否解析
-Get-Content 'C:\Users\Lenovo\.dsh\profiles\web\package.json' -Raw | ConvertFrom-Json | Out-Null
+Get-Content "$env:USERPROFILE\.dsh\profiles\web\package.json" -Raw | ConvertFrom-Json | Out-Null
 'package.json 解析正常'
 ```
 

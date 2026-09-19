@@ -61,7 +61,7 @@ standard-extras/node_modules/@deepseek-ai/dsh-tools -> <当前安装>/dsh-tools
 | --- | --- |
 | `![x](http://127.0.0.1:8791/_tmp_h1.png)`（本机静态服务） | 显示 |
 | `![x](https://www.python.org/static/img/python-logo.png)` | 显示 |
-| `![x](file:///C:/Users/Lenovo/Documents/work/_tmp_h1.png)` | **不显示** |
+| `![x](file:///<你的工作区>/_tmp_h1.png)` | **不显示** |
 
 所以：`detail` 转发确实生效（否则三张都不会有），图片渲染也正常；限制在**图源必须是
 http(s) URL** —— 裸绝对路径和 `file://` 都取不到，本地图片得先起个静态服务
