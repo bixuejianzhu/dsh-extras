@@ -351,3 +351,32 @@ PS 5.1 的 `Remove-Item -Recurse -Force` 作用在含 junction 的目录上时�
 
 同理：`cordis.patch.yml` 里那句「不要用 [regex]::Replace(text, pattern, scriptblock, 1)」之类的经验，
 以及本文档的其它坑，都是为了让「重新生成」这条路靠得住 —— 而不是让人回头去改生成物。
+
+## 信任边界：自愈会在每次启动时执行什么
+
+装上之后，`~/.dsh\dsh-tray.ps1` 与 `launch-dsh-web.cmd` 在**启动 dsh 之前**会执行一次
+`<仓库目录>\scripts\install.ps1`。这件事值得写清楚 —— 它决定了「仓库目录」属于**可信区域**：
+
+| 项 | 事实 |
+|---|---|
+| 以谁的身份跑 | 你自己（当前用户），**不提权**、不弹 UAC |
+| 什么时候跑 | 每次冷启动（快捷方式 / 托盘 / `launch-dsh-web.cmd`）；已有实例在跑时不会跑 |
+| 会写哪里 | 只写 `$DSH_HOME`（`profiles\` 与 `.agent-presets\`）和它自己的日志；**不写** dsh 安装目录 |
+| 会不会联网 / 装东西 | 不会：不下载、不装包、不改 PATH |
+| 会不会改默认 preset | 不会（注入的命令**不带** `-SetDefault`，只修接线） |
+| 失败怎么办 | 只记日志、不阻塞启动（`~/.dsh/dsh-extras-install.log`） |
+
+**所以：谁能写这个仓库目录，谁就能在你的下一次 dsh 启动时执行代码。**
+把它放在只有你能写的位置（例如自己的用户目录下），不要放在共享目录、网络盘或
+其他人/进程可写的路径里。仓库被改名或移走时，自愈只会记一条 `not found`，不会执行旧路径上的任何东西。
+
+想核对它到底会跑什么：
+
+```powershell
+Get-Content <仓库目录>\scripts\install.ps1
+```
+
+想关掉自愈：删掉两个启动脚本里那段以
+`# --- 插件组自愈（由 dsh-extras 的安装器注入；删除本段即可移除）` 开头的块，
+或直接用同目录的 `*.bak-before-selfheal` 备份还原。注意 `install.ps1 -SkipLauncher` 只保证
+**不再注入**，已经注入的那段要按上面的办法删掉。

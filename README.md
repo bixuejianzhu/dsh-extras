@@ -35,6 +35,10 @@
 powershell -File scripts\install.ps1 -SetDefault
 ```
 
+> **信任边界**：安装器会把一段「启动前自愈」注入 `~/.dsh` 的启动脚本 —— 它每次启动时执行本仓库里的
+> `scripts\install.ps1`（不提权、不联网、只写 `~/.dsh`）。所以**仓库目录请放在只有你能写的位置**。
+> 细节、核对方法与关闭办法见 [MAINTAINERS.md](MAINTAINERS.md)。
+
 ## 前置条件
 
 - Windows + 已安装并**启动过一次**的 DSH（安装器要顺着 `profiles` 里的 junction 定位当前安装）
