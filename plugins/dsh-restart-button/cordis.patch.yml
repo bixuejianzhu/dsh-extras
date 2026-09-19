@@ -1,0 +1,7 @@
+# dsh-restart-button bundle patch: inserts this plugin into a profile's layer
+# stack. The host half owns no restart machinery of its own -- it publishes one
+# read-only status route, and the sidebar button POSTs to whichever guarded
+# restart channel the host already has (dsh-market's).
+- insert:
+    - id: dsh-restart-button
+      name: 'dsh-restart-button'

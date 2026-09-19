@@ -1,0 +1,9 @@
+# 本目录自包含：没有构建产物、没有 node_modules、代码里没有绝对路径。
+# 需要忽略的只有系统/编辑器垃圾与本地临时文件。
+
+Thumbs.db
+desktop.ini
+*.swp
+*~
+*.log
+.tmp-*

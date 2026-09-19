@@ -1,0 +1,34 @@
+{
+  "name": "dsh-ask-detail",
+  "version": "0.1.0",
+  "private": true,
+  "description": "选项卡显示图片插件：让 ask_user_question 的 detail 字段（markdown，含图片）真正送达卡片。上游 dsh-tool-ask-user 在 execute() 里丢掉了该字段，本插件在与上游同层的 agent 作用域重新注册同名工具并补上转发。",
+  "type": "module",
+  "main": "index.js",
+  "license": "MIT",
+  "exports": {
+    ".": "./index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "README.md"
+  ],
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "ask-user",
+    "detail",
+    "markdown",
+    "image"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/dsh-tools": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh-tools": {
+      "optional": true
+    }
+  }
+}

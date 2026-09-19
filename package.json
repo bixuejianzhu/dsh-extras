@@ -1,0 +1,42 @@
+{
+  "name": "dsh-extras",
+  "version": "0.1.0",
+  "private": true,
+  "description": "插件组：把这台机器上的自制 DSH 插件收进同一个 bundle 层，profile 只需列这一个包。设置页「通用插件设置」提供重启、关机与一键重跑安装器；选项卡显示图片插件由 agent preset 挂载（工具必须在 agent 作用域）。",
+  "type": "module",
+  "main": "index.js",
+  "license": "MIT",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./lib/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "lib",
+    "cordis.patch.yml",
+    "plugins",
+    "scripts",
+    "README.md"
+  ],
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "bundle",
+    "group",
+    "settings"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings-general"
+      ]
+    }
+  }
+}

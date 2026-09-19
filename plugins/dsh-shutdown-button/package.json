@@ -1,0 +1,34 @@
+{
+  "name": "dsh-shutdown-button",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Host 半边：发布 /dsh-shutdown-button/api/status 与 /api/shutdown，二次确认后优雅关闭当前 DSH 进程（dispose 整棵插件树并正常退出）。UI 已并入 dsh-extras 设置页「通用插件设置」的第二段（独立设置页不再注册）。",
+  "type": "module",
+  "main": "index.js",
+  "license": "MIT",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "index.js",
+    "lib",
+    "README.md"
+  ],
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "dsh-plugin",
+    "shutdown",
+    "settings"
+  ],
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "*"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/cordis": {
+      "optional": true
+    }
+  }
+}

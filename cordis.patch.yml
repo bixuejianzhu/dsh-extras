@@ -1,0 +1,33 @@
+# dsh-extras bundle patch —— 插件组本身。
+#
+# 作用：把**本组自己**与两个按钮成员插入 profile 的补丁栈，于是 profile 的
+# `dsh.profile.bundles` 里只需要 `dsh-extras` 一行，而不是逐个列成员。
+# 行里的 name 按包名从 profile 目录解析（成员包需是 profile 的依赖）。
+#
+# 为什么本组必须 insert 自己：bundle 的 package.json 只被用来找补丁层
+# （dsh.bundle.patch），它的 main/index.js **不会自动运行**。少了 id: dsh-extras 这一行：
+#   - 宿主半边不会挂上 —— 设置页要用的 /dsh-extras/api/status 与 /api/install 都是 404；
+#   - 客户端半边也不会被扫到 —— @deepseek-ai/dsh-client-modules 是按 **Loader 的行**
+#     找 `dsh.client` 声明的（源码注释：scans the host Loader's entries for packages
+#     declaring `dsh.client`），没挂载就没人看，设置里那一页就不会出现。
+# 这两条是同一个根因，踩过一次。
+#
+# 作用域分工（架构约束，不是偷懒）：
+#   - 本组 + 重启 / 关机按钮挂在 **profile（host）作用域** —— 它们发布 HTTP 路由、
+#     注入 webServer，和 profile 的其它行同层，所以由本文件 insert；
+#   - 选项卡显示图片插件必须挂在 **agent 作用域** —— 它注册的是模型可见的工具，
+#     而工具注册表拒绝同名全局注册；因此它由 agent preset 的 tool-ask-user 行挂载，
+#     见 plugins/ask-detail/ 与 scripts/install.ps1。
+#
+# 行 id 与各插件自己的 `name` 导出保持一致，便于在 profile 的 cordis.patch.yml 里
+# 按 id 单独开关。
+
+- insert:
+    - id: dsh-extras
+      name: 'dsh-extras'
+
+    - id: dsh-restart-button
+      name: 'dsh-restart-button'
+
+    - id: dsh-shutdown-button
+      name: 'dsh-shutdown-button'
