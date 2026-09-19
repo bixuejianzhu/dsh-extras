@@ -219,6 +219,28 @@ if (-not (Same-Path $linkTarget $newRepo)) { Write-Host "         note: same rep
 Check (Test-Path (Join-Path $newRepo 'README.md')) 'the repo itself is intact'
 Check (Test-Path (Join-Path $profDir 'node_modules\dsh-restart-button')) 'members were junctioned too'
 
+Write-Host "== case 6: repo source encoding (BOM guard) =="
+# PS 5.1 parses a BOM-less .ps1 as ANSI, so any non-ASCII byte in one becomes mojibake that can
+# swallow a quote and break the whole file. Every .ps1 in the SOURCE repo that holds a non-ASCII
+# byte must therefore carry the UTF-8 BOM. Learned the hard way: a tool that rewrites files
+# dropped the BOM on verify.ps1 and it stopped parsing. ASCII-only scripts need no BOM -- this
+# file is one of them on purpose, so keep this block ASCII.
+$guarded = 0
+foreach ($ps1File in @(Get-ChildItem -LiteralPath $srcRepo -Recurse -File -Filter *.ps1 | Where-Object { $_.FullName -notlike '*\.git\*' })) {
+  $bytes = [System.IO.File]::ReadAllBytes($ps1File.FullName)
+  $nonAscii = $false
+  for ($i = 0; $i -lt $bytes.Length; $i++) { if ($bytes[$i] -gt 0x7F) { $nonAscii = $true; break } }
+  if ($nonAscii) {
+    $guarded++
+    Check (Has-Bom $ps1File.FullName) "BOM: $(Leaf $ps1File.FullName) holds non-ASCII -> UTF-8 BOM present"
+  } else {
+    Write-Host "  [info] BOM: $(Leaf $ps1File.FullName) is ASCII-only -> no BOM required"
+  }
+}
+# Keep the guard from passing vacuously: if a rename or a filter change makes the scan find
+# nothing, zero files get checked and every assertion above silently disappears.
+Check ($guarded -ge 1) "BOM: scan is non-vacuous ($guarded script(s) with non-ASCII were checked)"
+
 Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host "PASS=$pass FAIL=$fail"
 if ($fail -gt 0) {
