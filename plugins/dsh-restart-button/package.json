@@ -2,7 +2,7 @@
   "name": "dsh-restart-button",
   "version": "0.1.0",
   "private": true,
-  "description": "Host 半边：发布 /dsh-restart-button/api/status，复用 dsh-market 的受保护重启通道。UI 已并入 dsh-extras 设置页「通用插件设置」的第一段（侧栏按钮不再注册）。",
+  "description": "Host 半边：发布 /dsh-restart-button/api/status。UI 已并入 dsh-extras 设置页「通用插件设置」的第一段（侧栏按钮不再注册）。",
   "type": "module",
   "main": "index.js",
   "license": "MIT",
