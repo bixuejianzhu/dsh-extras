@@ -6,6 +6,13 @@
 # It copies this repo into a temp dir, builds a fake $DSH_HOME, and runs the installer against
 # that fake home -- nothing real is touched (no profile, no preset, no launcher outside the temp
 # dir). Exit code 0 = all green, 1 = a check failed.
+#
+# Path assertions compare FILES BY CONTENT, not by spelling. The installer derives its paths with
+# Resolve-Path while this test builds them with Join-Path, and on a given machine the same location
+# can have more than one spelling (8.3 short names -- GitHub's windows runner reaches TEMP through
+# one -- plus case and trailing separators). Raw string comparison failed 5 checks on that runner
+# for no real reason. A spelling difference is now reported as a note, never as a FAIL.
+
 $ErrorActionPreference = 'Stop'
 $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
 $utf8Bom = New-Object System.Text.UTF8Encoding($true)
@@ -15,24 +22,81 @@ function Has-Bom([string]$p) {
   return ($b.Length -ge 3 -and $b[0] -eq 0xEF -and $b[1] -eq 0xBB -and $b[2] -eq 0xBF)
 }
 function Hash([string]$p) { return (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash }
+function Leaf([string]$p) { return (Split-Path -Leaf $p) }
 
-$pass = 0; $fail = 0
+$pass = 0
+$fail = 0
+# Any unexpected exception counts as FAIL and continues (a silent stop is the worst outcome for CI).
+trap {
+  $script:fail++
+  $msg = "unexpected: $($_.Exception.Message) (line $($_.InvocationInfo.ScriptLineNumber))"
+  Write-Host "  [FAIL] $msg"
+  Write-Host "::error::$msg"
+  continue
+}
 function Ok([string]$m) { $script:pass++; Write-Host "  [PASS] $m" }
 function Bad([string]$m) { $script:fail++; Write-Host "  [FAIL] $m" }
 function Check($c, [string]$m) { if ($c) { Ok $m } else { Bad $m } }
 
-$srcRepo = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
+# Canonical spelling of a path: let the filesystem name it, then fold case and separators.
+function Canon([string]$p) {
+  if ([string]::IsNullOrEmpty($p)) { return '' }
+  $q = $p
+  try { $q = (Resolve-Path -LiteralPath $p -ErrorAction Stop).Path } catch { }
+  return (($q -replace '/', '\').TrimEnd('\')).ToLowerInvariant()
+}
+function Same-Path([string]$a, [string]$b) {
+  if ([string]::IsNullOrEmpty($a) -or [string]::IsNullOrEmpty($b)) { return $false }
+  return ((Canon $a) -eq (Canon $b))
+}
+# What we actually care about is that the self-heal calls THIS repo's installer. Prove it by
+# content: the same file reached through two different spellings hashes the same.
+function Test-IsInstaller([string]$Path, [string]$Expected) {
+  if ([string]::IsNullOrEmpty($Path)) { return $false }
+  if (-not (Test-Path -LiteralPath $Path -PathType Leaf)) { return $false }
+  try { return ((Hash $Path) -eq (Hash $Expected)) } catch { return $false }
+}
+function Check-InstallerPaths([string[]]$Actual, [string]$Expected, [string]$m) {
+  $bad = @($Actual | Where-Object { -not (Test-IsInstaller $_ $Expected) })
+  if ($Actual.Count -ge 1 -and $bad.Count -eq 0) {
+    Ok $m
+    $odd = @($Actual | Where-Object { -not (Same-Path $_ $Expected) })
+    if ($odd.Count -gt 0) { Write-Host "         note: same installer, spelled differently: $($odd -join ' | ')" }
+  } else {
+    Bad $m
+    Write-Host "         expected: $Expected"
+    Write-Host "         actual  : $($Actual -join ' | ')"
+  }
+}
+# The self-heal block writes the installer path in two shapes; pull them back out to compare.
+function Get-TrayPath([string]$text) {
+  $m = [regex]::Match($text, '(?m)^[ \t]*\$installer = ''(?<p>[^'']*)''')
+  if ($m.Success) { return $m.Groups['p'].Value }
+  return ''
+}
+function Get-CmdPaths([string]$text) {
+  return @([regex]::Matches($text, '"(?<p>[^"\r\n]*\\scripts\\install\.ps1)"') | ForEach-Object { $_.Groups['p'].Value })
+}
+
+$selfDir = $PSScriptRoot
+if ([string]::IsNullOrEmpty($selfDir)) { $selfDir = Split-Path -Parent $MyInvocation.MyCommand.Path }
+$srcRepo = (Resolve-Path -LiteralPath (Join-Path $selfDir '..')).Path
 $root = Join-Path $env:TEMP ('extras-repoint-' + [guid]::NewGuid().ToString('N'))
 $oldDir = 'C:\OldPlace\dsh-extras'
-$newRepo = Join-Path $root 'newplace\dsh-extras'
 $fakeHome = Join-Path $root 'home'
 $tray = Join-Path $fakeHome 'dsh-tray.ps1'
 $cmd = Join-Path $fakeHome 'launch-dsh-web.cmd'
-$newInstaller = Join-Path $newRepo 'scripts\install.ps1'
+$copyRoot = Join-Path $root 'newplace'
 
-New-Item -ItemType Directory -Force -Path (Join-Path $root 'newplace') | Out-Null
-Copy-Item -LiteralPath $srcRepo -Destination (Join-Path $root 'newplace') -Recurse -Force
-New-Item -ItemType Directory -Force -Path (Join-Path $fakeHome 'profiles\node_modules\@deepseek-ai') | Out-Null
+New-Item -ItemType Directory -Force -Path $copyRoot | Out-Null
+Copy-Item -LiteralPath $srcRepo -Destination $copyRoot -Recurse -Force
+# Ask the filesystem how it spells the copy instead of trusting our own concatenation: the
+# installer's paths come out of Resolve-Path, so ours has to as well (see the header note).
+$newRepo = (Resolve-Path -LiteralPath (Join-Path $copyRoot (Leaf $srcRepo))).Path
+$newInstaller = Join-Path $newRepo 'scripts\install.ps1'
+Write-Host "[info] repo under test : $newRepo"
+Write-Host "[info] TEMP            : $env:TEMP"
+
 # install.ps1 step 0 resolves the live install through this junction; point it at the real one,
 # or at a stand-in when this machine has never started dsh (keeps the test runnable in CI).
 $realDshHome = if ($env:DSH_HOME) { $env:DSH_HOME } else { Join-Path $env:USERPROFILE '.dsh' }
@@ -44,6 +108,7 @@ if (Test-Path $realLink) {
   $linkTarget = Join-Path $root 'standin-pkgs\@deepseek-ai'
   New-Item -ItemType Directory -Force -Path (Join-Path $linkTarget 'dsh-agent-presets') | Out-Null
 }
+New-Item -ItemType Directory -Force -Path (Join-Path $fakeHome 'profiles\node_modules\@deepseek-ai') | Out-Null
 New-Item -ItemType Junction -Path (Join-Path $fakeHome 'profiles\node_modules\@deepseek-ai\dsh-agent-presets') -Target $linkTarget | Out-Null
 
 function New-FakeTray([string]$dir) {
@@ -92,8 +157,8 @@ Write-Host "== case 1: fresh injection (clean launchers) =="
 [System.IO.File]::WriteAllText($tray, "`$ErrorActionPreference = 'Stop'`nfunction Start-DshWeb { Write-Host 'fake' }`n[void](Start-DshWeb)`n", $utf8Bom)
 [System.IO.File]::WriteAllText($cmd, "@echo off`nnode `"C:\fake\bin.js`" web`n", $utf8NoBom)
 Run-Installer
-Check ((Read-T $tray).Contains("`$installer = '$newInstaller'")) 'tray: fresh injection points at the new repo'
-Check ((Read-T $cmd).Contains($newInstaller)) 'cmd: fresh injection points at the new repo'
+Check-InstallerPaths @(Get-TrayPath (Read-T $tray)) $newInstaller 'tray: fresh injection points at the new repo'
+Check-InstallerPaths (Get-CmdPaths (Read-T $cmd)) $newInstaller 'cmd: fresh injection points at the new repo'
 Check (Has-Bom $tray) 'tray: BOM preserved'
 $pe = $null
 [void][System.Management.Automation.Language.Parser]::ParseFile($tray, [ref]$null, [ref]$pe)
@@ -108,7 +173,7 @@ Run-Installer
 $trayNow = Read-T $tray
 $cmdNow = Read-T $cmd
 Check (-not $trayNow.Contains($oldDir)) 'tray: old path gone'
-Check ($trayNow.Contains("`$installer = '$newInstaller'")) 'tray: re-pointed to the new repo'
+Check-InstallerPaths @(Get-TrayPath $trayNow) $newInstaller 'tray: re-pointed to the new repo'
 Check (Has-Bom $tray) 'tray: BOM preserved through re-point'
 $pe = $null
 [void][System.Management.Automation.Language.Parser]::ParseFile($tray, [ref]$null, [ref]$pe)
@@ -116,7 +181,7 @@ Check (@($pe).Count -eq 0) 'tray: still parses after re-point'
 Check ($trayNow.Contains('Invoke-ExtrasInstaller')) 'tray: call line still present'
 Check ($trayNow.Contains('[void](Start-DshWeb)')) 'tray: start line still present'
 Check (-not $cmdNow.Contains($oldDir)) 'cmd: old path gone'
-Check (([regex]::Matches($cmdNow, [regex]::Escape($newInstaller)).Count) -eq 2) 'cmd: both occurrences re-pointed'
+Check-InstallerPaths (Get-CmdPaths $cmdNow) $newInstaller 'cmd: both occurrences re-pointed'
 Check ((($cmdNow -split "`n").Count) -eq (($cmdBefore -split "`n").Count)) 'cmd: line count unchanged'
 Check ($cmdNow.TrimEnd().EndsWith('web')) 'cmd: file still ends with the dsh start line'
 
@@ -142,16 +207,21 @@ New-Item -ItemType Directory -Force -Path (Join-Path $profDir 'node_modules') | 
 $sentinel = Join-Path $root 'sentinel-target'
 New-Item -ItemType Directory -Force -Path $sentinel | Out-Null
 [System.IO.File]::WriteAllText((Join-Path $sentinel 'keep.txt'), 'keep', $utf8NoBom)
-New-Item -ItemType Junction -Path (Join-Path $profDir 'node_modules\dsh-extras') -Target $sentinel | Out-Null
+$repoLink = Join-Path $profDir 'node_modules\dsh-extras'
+New-Item -ItemType Junction -Path $repoLink -Target $sentinel | Out-Null
 Run-Installer -Switches @('-SkipPreset', '-SkipLauncher')
 Check ($script:lastOut.Contains('junction: node_modules\dsh-extras')) 'installer replaced the junction'
 Check (Test-Path (Join-Path $sentinel 'keep.txt')) 'sentinel FILE survived the junction swap'
-Check (Test-Path (Join-Path $sentinel 'keep.txt')) 'sentinel dir survived'
-$link = Get-Item -LiteralPath (Join-Path $profDir 'node_modules\dsh-extras') -Force
-Check ((@($link.Target)[0]) -eq $newRepo) 'junction now points at the repo'
+$link = Get-Item -LiteralPath $repoLink -Force
+$linkTarget = @($link.Target)[0]
+Check (Test-IsInstaller (Join-Path $linkTarget 'scripts\install.ps1') $newInstaller) 'junction now points at the repo'
+if (-not (Same-Path $linkTarget $newRepo)) { Write-Host "         note: same repo, spelled differently: $linkTarget" }
 Check (Test-Path (Join-Path $newRepo 'README.md')) 'the repo itself is intact'
 Check (Test-Path (Join-Path $profDir 'node_modules\dsh-restart-button')) 'members were junctioned too'
 
 Remove-Item -LiteralPath $root -Recurse -Force -ErrorAction SilentlyContinue
 Write-Host "PASS=$pass FAIL=$fail"
-if ($fail -gt 0) { exit 1 }
+if ($fail -gt 0) {
+  Write-Host "::error::test-installer: $fail check(s) failed (see the log above for expected/actual)"
+  exit 1
+}

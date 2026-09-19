@@ -17,7 +17,7 @@ dsh-extras\
   smoke-client.mjs      客户端 bundle 的 Node 冒烟测试
   scripts\install.ps1   安装器：生成 preset + 接 profile（幂等；也负责搬迁后重指向）
   scripts\verify.ps1    自检：四层检查 + 路由探测
-  scripts\test-installer.ps1  安装器自身的本地回归测试（假 $DSH_HOME，25 项断言）
+  scripts\test-installer.ps1  安装器自身的本地回归测试（假 $DSH_HOME，24 项断言）
   plugins\
     ask-detail\             选项卡显示图片插件（由 agent preset 挂载）
     dsh-restart-button\     重启按钮（host 能力）
@@ -171,7 +171,7 @@ profile 接线（bundles 列表、三个成员的 junction 与 `link:` 依赖、
 外加两项守卫：profile 的 JSON/YAML 不带 BOM、所有读取都走 UTF-8 安全 API。
 
 改过 `install.ps1` 的注入 / junction 逻辑后，再跑一次它自带的本地回归测试 —— 它在临时目录里
-造一套假 `$DSH_HOME` 与假启动器，不动真东西（25 项断言）：
+造一套假 `$DSH_HOME` 与假启动器，不动真东西（24 项断言）：
 
 ```powershell
 powershell -File scripts/test-installer.ps1
