@@ -160,15 +160,30 @@ foreach ($route in @('dsh-shutdown-button', 'dsh-restart-button')) {
 
 # ── 4. 启动器自愈 ────────────────────────────────────────────────────────────
 Section '启动器自愈（~/.dsh 的启动脚本）'
+# 本脚本自己所在的仓库根：自愈注入的路径必须指回这里。只查"已注入"是不够的 ——
+# 仓库被搬走后旧路径还在文件里，那样每次开机跑的都是旧副本的安装器（假绿过一次）。
+$selfRoot = $PSScriptRoot
+if ([string]::IsNullOrEmpty($selfRoot)) { $selfRoot = Split-Path -Parent $MyInvocation.MyCommand.Path }
+$selfInstaller = Join-Path (Resolve-Path (Join-Path $selfRoot '..')).Path 'scripts\install.ps1'
+Write-Host "  [info] 本仓库的安装器：$selfInstaller"
 $trayPath = Join-Path $dshHome 'dsh-tray.ps1'
 $cmdPath  = Join-Path $dshHome 'launch-dsh-web.cmd'
 if (Test-Path $trayPath) {
-  Check ((Read-Text $trayPath).Contains('function Invoke-ExtrasInstaller')) 'dsh-tray.ps1 已注入启动前自愈'
+  $trayText = Read-Text $trayPath
+  Check ($trayText.Contains('function Invoke-ExtrasInstaller')) 'dsh-tray.ps1 已注入启动前自愈'
+  # 必须用单引号串：双引号里的 \$installer 会被 PowerShell 当变量展开成空串，正则就永远不匹配（踩过一次）
+  $trayIns = [regex]::Match($trayText, '(?m)^[ \t]*\$installer = ''(?<path>[^'']*)''')
+  Check ($trayIns.Success -and $trayIns.Groups['path'].Value -eq $selfInstaller) 'dsh-tray.ps1 的自愈路径指向本仓库'
 } else {
   Write-Host '  [skip] 没有 dsh-tray.ps1（这台机器的启动方式不同）'
 }
 if (Test-Path $cmdPath) {
-  Check ((Read-Text $cmdPath).Contains('dsh-extras self-heal')) 'launch-dsh-web.cmd 已注入启动前自愈'
+  $cmdText = Read-Text $cmdPath
+  Check ($cmdText.Contains('dsh-extras self-heal')) 'launch-dsh-web.cmd 已注入启动前自愈'
+  $cmdMarkerIdx = $cmdText.IndexOf('dsh-extras self-heal')
+  $cmdPaths = @([regex]::Matches($cmdText, '"(?<path>[^"\r\n]*\\scripts\\install\.ps1)"') | Where-Object { $_.Index -gt $cmdMarkerIdx })
+  $cmdStale = @($cmdPaths | Where-Object { $_.Groups['path'].Value -ne $selfInstaller })
+  Check ($cmdPaths.Count -ge 1 -and $cmdStale.Count -eq 0) "launch-dsh-web.cmd 的自愈路径指向本仓库（$($cmdPaths.Count) 处）"
 } else {
   Write-Host '  [skip] 没有 launch-dsh-web.cmd'
 }

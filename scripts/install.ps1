@@ -20,11 +20,13 @@
     （shipped 根优先，所以 id 不能与 standard 撞名）。代价是复制品会随上游升级而过时 ——
     升级后重跑本脚本即可：它每次都从当前安装里的 standard 重新生成。
 
-  为什么 preset 里要有个 node_modules junction：
-    本插件 import 了 @deepseek-ai/dsh-tools（defineTool 负责把简写 schema 转成 JSON Schema，
-    并包上参数校验，不能自己糊一个）。preset 目录在用户 home 下，Node 向上找 node_modules
-    永远到不了 harness 的依赖；所以把 harness 的 dsh-tools junction 到 preset 目录里。
-    它指向当前安装，升级换了安装目录时重跑本脚本即可刷新。
+  为什么 preset 里不需要 node_modules：
+    本插件早期 import 了 @deepseek-ai/dsh-tools（defineTool 负责把简写 schema 转成 JSON Schema
+    并包上参数校验）。但 preset 目录在用户 home 下，Node 向上找 node_modules 永远到不了
+    harness 的依赖，只能往 preset 里 junction 一份 —— 而那个 junction 指向带 node 版本槽的
+    安装路径，dsh 一升级就断。现在插件是零依赖的（schema 与参数校验自己写，见
+    plugins/ask-detail/index.js 顶部），preset 里干净得只剩几个文件，老版本留下的 junction
+    会在下面被清掉。
 
   用法（PowerShell 5.1 或 7 都可以；脚本带 UTF-8 BOM，5.1 能正确解析中文）：
     powershell -File install.ps1                    # 装 preset + 接 profile
@@ -76,8 +78,24 @@ if ([string]::IsNullOrEmpty($GroupDir)) {
 function Read-Utf8([string]$Path) { return [System.IO.File]::ReadAllText($Path, $utf8) }
 function Write-Utf8([string]$Path, [string]$Text) { [System.IO.File]::WriteAllText($Path, $Text, $utf8) }
 
+function Remove-LinkOrDirectory([string]$Path) {
+  # 删 junction 必须只摘链接本身：PS 5.1 的 Remove-Item -Recurse 面对 junction 有递归
+  # 进目标目录、把真内容一起删掉的风险（踩过一次）。这里的目标就是仓库本身，
+  # 递归进去等于把仓库删了，所以一律走 .NET 只删链接；真实目录才用 Remove-Item。
+  $item = Get-Item -LiteralPath $Path -Force -ErrorAction SilentlyContinue
+  if ($null -eq $item) {
+    try { [System.IO.Directory]::Delete($Path, $false) } catch { Remove-Item -LiteralPath $Path -Recurse -Force }
+    return
+  }
+  if (($item.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) {
+    [System.IO.Directory]::Delete($Path, $false)
+  } else {
+    Remove-Item -LiteralPath $Path -Recurse -Force
+  }
+}
+
 function New-Junction([string]$Path, [string]$Target) {
-  if (Test-Path $Path) { Remove-Item -LiteralPath $Path -Recurse -Force }
+  if (Test-Path $Path) { Remove-LinkOrDirectory $Path }
   $parent = Split-Path -Parent $Path
   New-Item -ItemType Directory -Force -Path $parent | Out-Null
   New-Item -ItemType Junction -Path $Path -Target $Target | Out-Null
@@ -275,10 +293,14 @@ Write-Host ''
 # 都是启动时才被读取的）。所以把一次幂等的安装器调用注入启动脚本。
 #
 # 注入规则（全部为了"不帮倒忙"）：
-#   · 已注入过 -> 跳过；找不到启动脚本 -> 只提示、不改任何文件；
-#   · 结构不认识（找不到锚点）-> 跳过，不做猜测性改写；
+#   · 没注入过 -> 注入；
+#   · 已注入但**里面的路径不是当前仓库**（仓库被搬走了）-> 只把那个路径改成当前仓库；
+#     这条很关键：仓库搬走后若还按"已注入就跳过"，启动时调用的永远是旧路径的安装器，
+#     于是 junction 每次开机都被悄悄指回旧副本 —— 两个仓库互相覆盖，很难查。
+#   · 已注入且路径一致 -> 跳过；找不到启动脚本 -> 只提示、不改任何文件；
+#   · 结构不认识（找不到锚点 / 找不到路径行）-> 跳过，不做猜测性改写；
 #   · 首次改动前备份为 <文件>.bak-before-selfheal（已存在则不覆盖，保住最原始那份）；
-#   · .ps1 改完立刻做语法检查，失败就用备份回滚。
+#   · .ps1 改完立刻做语法检查，失败就回滚成改动前的原文。
 if (-not $SkipLauncher) {
   function Test-HasBom([string]$Path) {
     $bytes = [System.IO.File]::ReadAllBytes($Path)
@@ -290,11 +312,36 @@ if (-not $SkipLauncher) {
   }
 
   # ---- D1. dsh-tray.ps1（真正的托盘入口）----
+  # 注入块里这条路径是**唯一**的绝对路径，重指向只需要改它。
+  $trayInstallerLine = '(?m)^[ \t]*\$installer = ''(?<path>[^'']*)'''
+  $expectedInstaller = Join-Path $GroupDir 'scripts\install.ps1'
   $trayPath = Join-Path $dshHome 'dsh-tray.ps1'
   if (-not (Test-Path $trayPath)) {
     Write-Host '启动器自愈: 没有 dsh-tray.ps1，跳过'
   } elseif ((Read-Utf8 $trayPath).Contains('function Invoke-ExtrasInstaller')) {
-    Write-Host '启动器自愈: dsh-tray.ps1 已注入，跳过'
+    $trayText = Read-Utf8 $trayPath
+    $insMatch = [regex]::Match($trayText, $trayInstallerLine)
+    if (-not $insMatch.Success) {
+      Write-Host '启动器自愈: dsh-tray.ps1 已注入但找不到 $installer 行，跳过（不猜测性改写）'
+    } elseif ($insMatch.Groups['path'].Value -eq $expectedInstaller) {
+      Write-Host '启动器自愈: dsh-tray.ps1 已注入且路径一致，跳过'
+    } else {
+      $trayBom = Test-HasBom $trayPath
+      $trayBackup = "$trayPath.bak-before-selfheal"
+      if (-not (Test-Path $trayBackup)) { Copy-Item -LiteralPath $trayPath -Destination $trayBackup -Force }
+      # 用下标手术而不是正则替换：$GroupDir 里若出现 $ 或 \ 不会被当成替换语法（踩过同类坑）
+      $oldInstaller = $insMatch.Groups['path'].Value
+      $repointed = $trayText.Remove($insMatch.Groups['path'].Index, $oldInstaller.Length).Insert($insMatch.Groups['path'].Index, $expectedInstaller)
+      Save-MapText $trayPath $repointed $trayBom
+      $parseErrors = $null
+      [System.Management.Automation.Language.Parser]::ParseFile($trayPath, [ref]$null, [ref]$parseErrors) | Out-Null
+      if ($parseErrors.Count -gt 0) {
+        Save-MapText $trayPath $trayText $trayBom
+        Write-Host '启动器自愈: 重指向后语法检查失败，已还原 dsh-tray.ps1'
+      } else {
+        Write-Host "启动器自愈: dsh-tray.ps1 指向已更新 -> $GroupDir"
+      }
+    }
   } else {
     $trayText = Read-Utf8 $trayPath
     $epMatch = [regex]::Match($trayText, '(?m)^\$ErrorActionPreference\s*=.*$')
@@ -373,11 +420,41 @@ if (-not $SkipLauncher) {
   }
 
   # ---- D2. launch-dsh-web.cmd（无控制台的备用入口）----
+  # 这个块里同一条路径出现两次（if exist 判断 + powershell 调用），要一起改。
+  $cmdPathLine = '(?m)^(?<head>[^\r\n]*")(?<dir>[^"\r\n]*)(?<tail>\\scripts\\install\.ps1"[^\r\n]*)$'
+  $cmdMarker = 'dsh-extras self-heal'
   $cmdPath = Join-Path $dshHome 'launch-dsh-web.cmd'
   if (-not (Test-Path $cmdPath)) {
     Write-Host '启动器自愈: 没有 launch-dsh-web.cmd，跳过'
-  } elseif ((Read-Utf8 $cmdPath).Contains('dsh-extras self-heal')) {
-    Write-Host '启动器自愈: launch-dsh-web.cmd 已注入，跳过'
+  } elseif ((Read-Utf8 $cmdPath).Contains($cmdMarker)) {
+    $cmdText = Read-Utf8 $cmdPath
+    # 只认注入块里的行：标记行之前的内容一律不碰
+    $markerIdx = $cmdText.IndexOf($cmdMarker)
+    $pathMatches = @([regex]::Matches($cmdText, $cmdPathLine) | Where-Object { $_.Index -gt $markerIdx })
+    $stale = @($pathMatches | Where-Object { $_.Groups['dir'].Value -ne $GroupDir })
+    if ($pathMatches.Count -eq 0) {
+      Write-Host '启动器自愈: launch-dsh-web.cmd 已注入但找不到安装器路径行，跳过（不猜测性改写）'
+    } elseif ($stale.Count -eq 0) {
+      Write-Host '启动器自愈: launch-dsh-web.cmd 已注入且路径一致，跳过'
+    } else {
+      $cmdBackup = "$cmdPath.bak-before-selfheal"
+      if (-not (Test-Path $cmdBackup)) { Copy-Item -LiteralPath $cmdPath -Destination $cmdBackup -Force }
+      # 从后往前替换：否则前面替换过的长度变化会让后面的下标失效（踩过一次）
+      $repointed = $cmdText
+      foreach ($m in ($pathMatches | Sort-Object -Property Index -Descending)) {
+        $line = $m.Groups['head'].Value + $GroupDir + $m.Groups['tail'].Value
+        $repointed = $repointed.Remove($m.Index, $m.Length).Insert($m.Index, $line)
+      }
+      # 自检：行数与路径行条数都不能变，改坏了宁可什么都不做
+      $lineCountKept = (($repointed -split "`n").Count -eq ($cmdText -split "`n").Count)
+      $pathCountKept = ([regex]::Matches($repointed, $cmdPathLine).Count -eq $pathMatches.Count)
+      if ($lineCountKept -and $pathCountKept) {
+        [System.IO.File]::WriteAllText($cmdPath, $repointed, (New-Object System.Text.UTF8Encoding($false)))
+        Write-Host "启动器自愈: launch-dsh-web.cmd 指向已更新 -> $GroupDir"
+      } else {
+        Write-Host '启动器自愈: 重指向后自检不通过，已放弃改动 launch-dsh-web.cmd'
+      }
+    }
   } else {
     $cmdText = Read-Utf8 $cmdPath
     $nodeLine = [regex]::Match($cmdText, '(?m)^.*bin\.js"?\s+web\s*$')

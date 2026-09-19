@@ -1,7 +1,8 @@
 name: smoke
 
-# 这两个测试不依赖 dsh/harness：客户端 bundle 测试是纯 Node，
+# 前两个测试不依赖 dsh/harness：客户端 bundle 测试是纯 Node，
 # host 侧测试在找不到 dsh-tools 时会自动跳过 schema 校验那一步。
+# 第三个是 Windows 上的安装器回归测试（它自带替身，不需要机器上装过 dsh）。
 on:
   push:
   pull_request:
@@ -21,3 +22,13 @@ jobs:
 
       - name: 选项卡显示图片插件（零依赖 / detail 转发 / 参数校验）
         run: node plugins/ask-detail/smoke-host.mjs
+
+  installer-windows:
+    # 安装器只能在 Windows 上验（junction、dsh-tray.ps1），而且必须用 5.1 —— 那才是它真正要跑的宿主。
+    # 测试在临时目录里造一套假 $DSH_HOME 与假启动器，不动真东西；没有真安装时用替身。
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 安装器回归测试（自愈注入 / 搬迁重指向 / junction 安全删除）
+        shell: powershell
+        run: .\scripts\test-installer.ps1

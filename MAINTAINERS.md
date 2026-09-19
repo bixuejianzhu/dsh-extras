@@ -5,7 +5,7 @@
 把这台机器上的自制 DSH 插件收进**同一个 bundle 层**：profile 的 `dsh.profile.bundles`
 里只列 `dsh-extras` 一个包，成员由本组的补丁层统一 insert。
 
-**本组是自包含的** —— 三个插件、安装器、说明全在这一个文件夹里，换机器只需搬这个目录。
+**本组是自包含的** —— 三个插件、安装器、说明全在这一个仓库里，换机器只需把它 clone 过来。
 
 ```
 dsh-extras\
@@ -15,8 +15,9 @@ dsh-extras\
   lib\client.js         组的客户端半边（设置页「通用插件设置」三段）
   install.cmd           双击入口（新机器首次引导）
   smoke-client.mjs      客户端 bundle 的 Node 冒烟测试
-  scripts\install.ps1   安装器：生成 preset + 接 profile（幂等）
-  scripts\verify.ps1    自检：三层检查 + 路由探测
+  scripts\install.ps1   安装器：生成 preset + 接 profile（幂等；也负责搬迁后重指向）
+  scripts\verify.ps1    自检：四层检查 + 路由探测
+  scripts\test-installer.ps1  安装器自身的本地回归测试（假 $DSH_HOME，25 项断言）
   plugins\
     ask-detail\             选项卡显示图片插件（由 agent preset 挂载）
     dsh-restart-button\     重启按钮（host 能力）
@@ -107,26 +108,37 @@ node dsh-extras\smoke-client.mjs
 
 ## 换机迁移
 
-**只搬这个文件夹，不要搬 `$DSH_HOME`。** preset 目录里有指回「本机安装路径」的 junction，
+**只搬仓库，不要搬 `$DSH_HOME`。** preset 目录里有指回「本机安装路径」的 junction，
 `profiles` 里的清单也是本机路径，拷过去只会指向不存在的位置 —— 它们必须在新机器上**重新生成**。
 
-```
-要搬的：Documents\work\dsh-extras\      （一个目录，里面装齐三个插件与安装器）
-```
-
-（这个目录目前不在 git 仓库里，所以得手动复制。插件已经攒到三个，建议给它建个仓库。）
-
-新机器上的顺序（顺序有讲究）：
+仓库本身就是需要搬运的全部内容（三个插件、安装器、自检脚本都在里面）。新机器上的顺序：
 
 ```powershell
 # 1) 先把 dsh 装好并启动一次 —— 安装器要靠 profiles 里的 junction 找到「当前安装」，
 #    没启动过就没有那些 junction，脚本会直接报错。
 dsh web
 
-# 2) 复制 dsh-extras 目录过来，然后跑安装器（它会把一切重新生成）
+# 2) 拿到仓库（把 git 地址给 agent，或自己 clone），然后跑安装器
+git clone https://github.com/bixuejianzhu/dsh-extras
 powershell -File dsh-extras\scripts\install.ps1 -SetDefault
 
 # 3) 重启 dsh web，验证（见下一节）
+```
+
+> 第 2 步也可以直接双击 `install.cmd` —— 它等价于 `install.ps1 -SetDefault`。
+
+### 同一台机器上给仓库换位置
+
+换目录（先 clone 到别处、再删掉旧副本也算）**不需要**手改任何接线：重跑一次安装器，
+三处指向都会跟着重建 —— profile 的 junction 与 `link:` 依赖、preset 里的插件副本、
+以及启动器里自愈注入的那条路径。最后一条最容易漏：自愈块里写着旧路径时，此后每次开机
+都会去跑**旧副本**的安装器，把 junction 又指回去（两个仓库互相覆盖，很难查）。所以安装器
+对「已注入」的启动器会比对路径，不一致就只改路径（见坑六第 3 条），`verify.ps1` 也会检查。
+
+```powershell
+Move-Item <旧目录>\dsh-extras <新目录>\dsh-extras
+powershell -File <新目录>\dsh-extras\scripts\install.ps1
+powershell -File <新目录>\dsh-extras\scripts\verify.ps1
 ```
 
 脚本在新机器上会重新建立这几样东西，都不依赖旧机器：
@@ -139,7 +151,7 @@ powershell -File dsh-extras\scripts\install.ps1 -SetDefault
 | `profiles\web\package.json` | 三个成员都补成 `link:` 依赖，`bundles` 只留 `dsh-extras` |
 | `profiles\web\node_modules\{dsh-extras,dsh-restart-button,dsh-shutdown-button}` | junction → 本组目录 / 本组 `plugins\` 下的成员 |
 | `settings.yaml` 的 `agent-presets.default` | `standard-extras`（`-SetDefault` 时） |
-| `$DSH_HOME\dsh-tray.ps1`、`launch-dsh-web.cmd` | 注入「启动前自愈」（幂等；首次改动前备份 `.bak-before-selfheal`，语法检查失败自动回滚） |
+| `$DSH_HOME\dsh-tray.ps1`、`launch-dsh-web.cmd` | 注入「启动前自愈」；已注入但路径是旧的会自动改指回本仓库（幂等；首次改动前备份 `.bak-before-selfheal`，语法检查失败自动回滚） |
 
 成员包缺一个就会**启动失败**（组的补丁层无条件 insert 它们），所以脚本对缺失的成员直接报错，
 而不是留个坏掉的 profile 给你。只想少装某个成员时，请同时从 `cordis.patch.yml` 里删掉对应行。
@@ -153,9 +165,17 @@ powershell -File dsh-extras\scripts\install.ps1 -SetDefault
 powershell -File scripts/verify.ps1     # 只读、免提权；打印 PASS/FAIL 汇总，有失败则退出码 1
 ```
 
-它查三层：agent preset（组合文件那一行 / 插件文件 / 是否零依赖 / 能否真的 import）、
+它查四层：agent preset（组合文件那一行 / 插件文件 / 是否零依赖 / 能否真的 import）、
 profile 接线（bundles 列表、三个成员的 junction 与 `link:` 依赖、成员入口与客户端半边可达）、
-运行中宿主（两个按钮的路由），外加一项 BOM 守卫。
+运行中宿主（两个按钮的路由）、启动器自愈（是否已注入，且注入的路径**正是本仓库**），
+外加两项守卫：profile 的 JSON/YAML 不带 BOM、所有读取都走 UTF-8 安全 API。
+
+改过 `install.ps1` 的注入 / junction 逻辑后，再跑一次它自带的本地回归测试 —— 它在临时目录里
+造一套假 `$DSH_HOME` 与假启动器，不动真东西（25 项断言）：
+
+```powershell
+powershell -File scripts/test-installer.ps1
+```
 
 **重启前跑一次、重启后再跑一次**：静态项两次都应通过，而 `pid`/`bootId` 变了才说明新布局
 真的被加载了。组合层还可以单独审计一次（重复 id 会让启动直接失败）：
@@ -328,6 +348,11 @@ PS 5.1 的 `Remove-Item -Recurse -Force` 作用在含 junction 的目录上时�
 [System.IO.Directory]::Delete($link, $false)   # 只删链接本身，不递归
 ```
 
+`install.ps1` 里所有「换 junction」都收口到一个 `Remove-LinkOrDirectory` 里：先看是不是
+reparse point，是链接就只摘链接，是真目录才 `Remove-Item -Recurse`。这条尤其要紧 ——
+profile 里 `node_modules\dsh-extras` 的链接目标就是**仓库本身**，递归进去等于把仓库删了。
+`scripts/test-installer.ps1` 的 case 5 用哨兵文件守这个不变量。
+
 
 ### 坑六：文本手术的两个陷阱（改 `install.ps1` 的注入逻辑时必看）
 
@@ -342,6 +367,32 @@ PS 5.1 的 `Remove-Item -Recurse -Force` 作用在含 junction 的目录上时�
    每个拼接都要自己加括号：`('if exist "' + $GroupDir + '...')`。
 2. **插入了文本之后，之前算好的字符偏移全部失效**。注入函数改变了长度，再用旧的 `Match.Index`
    去 `Insert` 调用点，就会把调用插进别的行中间（踩过一次）。**在改动后的新文本上重新匹配**再插入。
+3. **「已注入就跳过」是错的**。自愈块里存着仓库的绝对路径，仓库一搬走，"跳过"就意味着此后每次
+   开机都跑**旧副本**的安装器，把 junction 指回去。正确做法：已注入时**比对路径** ——
+   不一致就只改那条路径，一致才跳过。`.ps1` 用下标手术改 `$installer = '...'` 那一行；
+   `.cmd` 里同一条路径出现两次，必须**从后往前**替换（否则前面的长度变化会让后面的下标失效）。
+   两边都要有"形状不认识就不动手"的兜底。
+
+### 坑七：用工具改带 BOM 的 `.ps1`，BOM 会被悄悄吃掉
+
+坑四说的是「自己读文件时别把 BOM 读没了」，这条是它的另一半：**写回时也要自己保证有 BOM**。
+本仓库的 `install.ps1` / `verify.ps1` 是「UTF-8 带 BOM」（PS 5.1 靠它才能正确解析中文），
+而很多编辑 / 打补丁的工具按 UTF-8 无 BOM 写回 —— 一保存 BOM 就没了，于是 5.1 按 ANSI 解析，
+中文全乱、报一屏语法错（这次是改自愈逻辑时踩到的）。改完 `.ps1` 固定做两步：
+
+```powershell
+# 1) 补回 BOM（读用无 BOM 编码、写显式用有 BOM 编码）
+$p = 'scripts\install.ps1'
+$t = [System.IO.File]::ReadAllText($p, (New-Object System.Text.UTF8Encoding($false)))
+[System.IO.File]::WriteAllText($p, $t, (New-Object System.Text.UTF8Encoding($true)))
+
+# 2) 语法自检：必须 0
+$e = $null; [void][System.Management.Automation.Language.Parser]::ParseFile($p, [ref]$null, [ref]$e); $e.Count
+```
+
+`scripts/test-installer.ps1` 是纯 ASCII，故意不带 BOM —— 它没有中文，不踩这个坑。
+`verify.ps1` 只守 profile 的 JSON/YAML **不带** BOM（那边相反：带 BOM 会让 dsh 起不来），
+`.ps1` 的 BOM 只能靠上面两步自己守。
 
 ### 纪律：preset 与 profile 清单都是**生成物**，不要去手改
 
@@ -351,6 +402,9 @@ PS 5.1 的 `Remove-Item -Recurse -Force` 作用在含 junction 的目录上时�
 
 同理：`cordis.patch.yml` 里那句「不要用 [regex]::Replace(text, pattern, scriptblock, 1)」之类的经验，
 以及本文档的其它坑，都是为了让「重新生成」这条路靠得住 —— 而不是让人回头去改生成物。
+
+`$DSH_HOME\dsh-tray.ps1` / `launch-dsh-web.cmd` 里那段自愈块同理：**别手改里面的路径**。
+仓库换位置后重跑一次安装器，它会自己改指回新位置（见「同一台机器上给仓库换位置」）。
 
 ## 信任边界：自愈会在每次启动时执行什么
 
