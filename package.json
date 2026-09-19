@@ -18,7 +18,8 @@
     "cordis.patch.yml",
     "plugins",
     "scripts",
-    "README.md"
+    "README.md",
+    "MAINTAINERS.md"
   ],
   "keywords": [
     "deepseek-harness",
