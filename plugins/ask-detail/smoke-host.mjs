@@ -10,7 +10,7 @@
  */
 import assert from 'node:assert/strict';
 import { copyFileSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 
@@ -82,4 +82,31 @@ for (const [bad, pattern] of cases) {
 console.log('校验 OK：' + cases.length + ' 个非法输入都被拒，错误信息带路径');
 
 rmSync(sandbox, { recursive: true, force: true });
-console.log('PASS: 零依赖 + 注册面 + detail 转发 + 参数校验');
+// ── 5. 用 harness 自己的编译器验证这两个内联 schema ──
+//    这一步守住 B 的最后一个风险：schema 是我们手写的，必须真的被 registry 的编译器接受。
+//    做法是直接调用 dsh-tools 导出的 assertSupportedJsonSchema / validateJsonSchemaValue；
+//    找不到 dsh-tools（比如在别的机器上）就跳过，不让测试因此失败。
+const dshTools = process.env.DSH_TOOLS_PATH
+  ?? join(homedir(), '.dsh', 'profiles', 'node_modules', '@deepseek-ai', 'dsh-tools', 'lib', 'index.js');
+try {
+  const tools = await import(pathToFileURL(dshTools).href);
+  tools.assertSupportedJsonSchema(registered.parameters);
+  tools.assertSupportedJsonSchema(registered.output.schema);
+  assert.deepEqual(
+    tools.validateJsonSchemaValue(registered.parameters, { questions: [{ id: 'a', question: 'b', detail: 'x' }] }, ''),
+    [],
+    'schema 应当接受合法参数',
+  );
+  assert.ok(
+    tools.validateJsonSchemaValue(registered.parameters, { questions: 'nope' }, '').length > 0,
+    'schema 应当拒绝非法参数',
+  );
+  console.log('schema OK：assertSupportedJsonSchema 接受两个内联 schema，且校验行为正确');
+} catch (error) {
+  if (error && (error.code === 'ERR_MODULE_NOT_FOUND' || error.code === 'ENOENT')) {
+    console.log('（跳过 schema 校验：这个环境里找不到 dsh-tools）');
+  } else {
+    throw error;
+  }
+}
+console.log('PASS: 零依赖 + 注册面 + detail 转发 + 参数校验 + schema 被 harness 接受');
