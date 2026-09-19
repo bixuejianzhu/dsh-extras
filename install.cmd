@@ -2,17 +2,13 @@
 rem ============================================================================
 rem  dsh-extras one-click installer (double-click this file).
 rem
-rem  Use this the FIRST time on a new machine, or any time you want to re-apply
-rem  the wiring without opening the GUI. After the plugin group is mounted, the
-rem  same thing is available as a button in Settings -> "通用插件设置".
-rem
-rem  Why a .cmd and not only the in-GUI button: the button lives inside the
-rem  plugin group, so it cannot exist before the group is mounted (chicken and
-rem  egg). This file is the bootstrap half.
+rem  Use this the FIRST time on a new machine. Afterwards dsh-tray.ps1 and
+rem  launch-dsh-web.cmd run the same installer automatically before every start
+rem  (see MAINTAINERS.md), so a manual run is only needed to apply changes now.
 rem
 rem  This file is intentionally ASCII-only: cmd.exe reads .cmd files in the
-rem  system ANSI codepage, so UTF-8 Chinese here would print as mojibake. The
-rem  installer itself (PowerShell, UTF-8 with BOM) prints Chinese just fine.
+rem  system ANSI codepage, so UTF-8 Chinese here would show up as mojibake.
+rem  The installer itself (PowerShell, UTF-8 with BOM) prints Chinese fine.
 rem ============================================================================
 setlocal
 set "SCRIPT=%~dp0scripts\install.ps1"
@@ -32,7 +28,7 @@ echo.
 if not "%CODE%"=="0" (
   echo [FAIL] installer exited with code %CODE% - see the output above.
 ) else (
-  echo [DONE] now restart dsh web; the settings page "通用插件设置" appears afterwards.
+  echo [DONE] restart dsh web; the plugin group takes effect after that.
 )
 pause
 exit /b %CODE%

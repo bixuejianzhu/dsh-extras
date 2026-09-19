@@ -330,3 +330,12 @@ PS 5.1 的 `Remove-Item -Recurse -Force` 作用在含 junction 的目录上时�
    每个拼接都要自己加括号：`('if exist "' + $GroupDir + '...')`。
 2. **插入了文本之后，之前算好的字符偏移全部失效**。注入函数改变了长度，再用旧的 `Match.Index`
    去 `Insert` 调用点，就会把调用插进别的行中间（踩过一次）。**在改动后的新文本上重新匹配**再插入。
+
+### 纪律：preset 与 profile 清单都是**生成物**，不要去手改
+
+`$DSH_HOME\.agent-presets\<id>\` 与 `profiles\<profile>\package.json` 都由 `install.ps1` 生成。
+自愈生效后**每次冷启动都会重跑一次安装器**，所以手改这两处会被下一次启动悄悄覆盖。
+要加行、改配置，请改仓库里的 `cordis.patch.yml` / `plugins\` / `scripts\install.ps1`。
+
+同理：`cordis.patch.yml` 里那句「不要用 [regex]::Replace(text, pattern, scriptblock, 1)」之类的经验，
+以及本文档的其它坑，都是为了让「重新生成」这条路靠得住 —— 而不是让人回头去改生成物。
