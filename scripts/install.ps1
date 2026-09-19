@@ -53,7 +53,8 @@ param(
   # 是否把 agent-presets.default 写进 $DSH_HOME/settings.yaml。
   [switch]$SetDefault,
   [switch]$SkipPreset,
-  [switch]$SkipProfile
+  [switch]$SkipProfile,
+  [switch]$SkipLauncher
 )
 
 $ErrorActionPreference = 'Stop'
@@ -266,6 +267,137 @@ if ($SetDefault) {
 }
 
 Write-Host ''
+# ══ D. 启动器自愈：让「起 dsh 之前先跑一次本安装器」这件事跟着仓库走 ═══════════
+# 为什么需要：dsh 升级换了 node 版本槽、仓库被挪过位置、junction 断裂、bundles 被
+# `dsh plugin add` 的 reconcile 弄乱 —— 这些在**启动时**修最合适（preset 与 junction
+# 都是启动时才被读取的）。所以把一次幂等的安装器调用注入启动脚本。
+#
+# 注入规则（全部为了"不帮倒忙"）：
+#   · 已注入过 -> 跳过；找不到启动脚本 -> 只提示、不改任何文件；
+#   · 结构不认识（找不到锚点）-> 跳过，不做猜测性改写；
+#   · 首次改动前备份为 <文件>.bak-before-selfheal（已存在则不覆盖，保住最原始那份）；
+#   · .ps1 改完立刻做语法检查，失败就用备份回滚。
+if (-not $SkipLauncher) {
+  function Test-HasBom([string]$Path) {
+    $bytes = [System.IO.File]::ReadAllBytes($Path)
+    return ($bytes.Length -ge 3 -and $bytes[0] -eq 0xEF -and $bytes[1] -eq 0xBB -and $bytes[2] -eq 0xBF)
+  }
+  function Save-MapText([string]$Path, [string]$Text, [bool]$WithBom) {
+    $enc = if ($WithBom) { New-Object System.Text.UTF8Encoding($true) } else { New-Object System.Text.UTF8Encoding($false) }
+    [System.IO.File]::WriteAllText($Path, $Text, $enc)
+  }
+
+  # ---- D1. dsh-tray.ps1（真正的托盘入口）----
+  $trayPath = Join-Path $dshHome 'dsh-tray.ps1'
+  if (-not (Test-Path $trayPath)) {
+    Write-Host '启动器自愈: 没有 dsh-tray.ps1，跳过'
+  } elseif ((Read-Utf8 $trayPath).Contains('function Invoke-ExtrasInstaller')) {
+    Write-Host '启动器自愈: dsh-tray.ps1 已注入，跳过'
+  } else {
+    $trayText = Read-Utf8 $trayPath
+    $epMatch = [regex]::Match($trayText, '(?m)^\$ErrorActionPreference\s*=.*$')
+    $startMatch = [regex]::Match($trayText, '(?m)^(?<indent>[ \t]*)\[void\]\(Start-DshWeb\)')
+    if (-not $epMatch.Success -or -not $startMatch.Success) {
+      Write-Host '启动器自愈: dsh-tray.ps1 结构不认识（缺 $ErrorActionPreference 或 [void](Start-DshWeb)），跳过'
+    } else {
+      $trayBom = Test-HasBom $trayPath
+      $trayBackup = "$trayPath.bak-before-selfheal"
+      if (-not (Test-Path $trayBackup)) { Copy-Item -LiteralPath $trayPath -Destination $trayBackup -Force }
+      $trayEol = if ($trayText.Contains("`r`n")) { "`r`n" } else { "`n" }
+      $inject = @(
+        '',
+        '# --- 插件组自愈（由 dsh-extras 的安装器注入；删除本段即可移除）-----------',
+        '$ExtrasLog = Join-Path $DshHome ''dsh-extras-install.log''',
+        'function Invoke-ExtrasInstaller {',
+        '    $installer = ''__GROUPDIR__\scripts\install.ps1''',
+        '    if (-not (Test-Path $installer)) {',
+        '        Write-Log (''extras installer not found, skipped: '' + $installer)',
+        '        return',
+        '    }',
+        '    try {',
+        '        $psi = New-Object System.Diagnostics.ProcessStartInfo',
+        '        $psi.FileName               = Join-Path $env:SystemRoot ''System32\WindowsPowerShell\v1.0\powershell.exe''',
+        '        $psi.Arguments              = ''-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'' + $installer + ''" -SetDefault''',
+        '        $psi.UseShellExecute        = $false',
+        '        $psi.CreateNoWindow         = $true',
+        '        $psi.RedirectStandardOutput = $true',
+        '        $psi.RedirectStandardError  = $true',
+        '        # 子进程被重定向时按系统 ANSI 代码页输出，不指定解码方式会得到乱码日志',
+        '        $psi.StandardOutputEncoding = [System.Text.Encoding]::Default',
+        '        $psi.StandardErrorEncoding  = [System.Text.Encoding]::Default',
+        '        $proc = New-Object System.Diagnostics.Process',
+        '        $proc.StartInfo = $psi',
+        '        [void]$proc.Start()',
+        '        $outTask = $proc.StandardOutput.ReadToEndAsync()',
+        '        $errTask = $proc.StandardError.ReadToEndAsync()',
+        '        if (-not $proc.WaitForExit(120000)) {',
+        '            try { $proc.Kill() } catch { }',
+        '            Write-Log ''extras installer TIMEOUT (120s) - killed''',
+        '            return',
+        '        }',
+        '        $body = $outTask.Result + $errTask.Result',
+        '        Add-Content -Path $ExtrasLog -Value ((Get-Date -Format ''yyyy-MM-dd HH:mm:ss'') + ''  exit='' + $proc.ExitCode + [Environment]::NewLine + $body) -Encoding UTF8 -ErrorAction SilentlyContinue',
+        '        Write-Log (''extras installer exit='' + $proc.ExitCode)',
+        '    } catch {',
+        '        Write-Log (''extras installer failed: '' + $_.Exception.Message)',
+        '    }',
+        '}'
+      ) -join $trayEol
+      $inject = $inject.Replace('__GROUPDIR__', $GroupDir)
+      $epLine = $epMatch.Value
+      $trayText = $trayText.Replace($epLine, $epLine + $trayEol + $inject)
+      # 注意：上面这次插入改变了后续所有字符偏移，所以调用点必须在**新文本**上重新匹配，
+      # 不能复用插入前算出来的 Index —— 否则会把调用插进别的行中间（踩过一次）。
+      $callMatch = [regex]::Match($trayText, '(?m)^(?<indent>[ \t]*)\[void\]\(Start-DshWeb\)')
+      if ($callMatch.Success) {
+        $trayText = $trayText.Insert($callMatch.Index, 'Invoke-ExtrasInstaller' + $trayEol + $callMatch.Groups['indent'].Value)
+      } else {
+        Copy-Item -LiteralPath $trayBackup -Destination $trayPath -Force
+        Write-Host '启动器自愈: 注入后找不到启动行，已回滚 dsh-tray.ps1'
+        $trayText = $null
+      }
+      if ($trayText -ne $null) {
+        Save-MapText $trayPath $trayText $trayBom
+      }
+      $parseErrors = $null
+      [System.Management.Automation.Language.Parser]::ParseFile($trayPath, [ref]$null, [ref]$parseErrors) | Out-Null
+      if ($parseErrors.Count -gt 0) {
+        Copy-Item -LiteralPath $trayBackup -Destination $trayPath -Force
+        Write-Host '启动器自愈: 注入后语法检查失败，已回滚 dsh-tray.ps1'
+      } else {
+        Write-Host '启动器自愈: 已注入 dsh-tray.ps1（备份 .bak-before-selfheal）'
+      }
+    }
+  }
+
+  # ---- D2. launch-dsh-web.cmd（无控制台的备用入口）----
+  $cmdPath = Join-Path $dshHome 'launch-dsh-web.cmd'
+  if (-not (Test-Path $cmdPath)) {
+    Write-Host '启动器自愈: 没有 launch-dsh-web.cmd，跳过'
+  } elseif ((Read-Utf8 $cmdPath).Contains('dsh-extras self-heal')) {
+    Write-Host '启动器自愈: launch-dsh-web.cmd 已注入，跳过'
+  } else {
+    $cmdText = Read-Utf8 $cmdPath
+    $nodeLine = [regex]::Match($cmdText, '(?m)^.*bin\.js"?\s+web\s*$')
+    if (-not $nodeLine.Success) {
+      Write-Host '启动器自愈: launch-dsh-web.cmd 里找不到启动 dsh 的那一行，跳过'
+    } else {
+      $cmdBackup = "$cmdPath.bak-before-selfheal"
+      if (-not (Test-Path $cmdBackup)) { Copy-Item -LiteralPath $cmdPath -Destination $cmdBackup -Force }
+      $cmdEol = if ($cmdText.Contains("`r`n")) { "`r`n" } else { "`n" }
+      $block = @(
+        'rem -- dsh-extras self-heal: sync the plugin group before starting dsh (idempotent, ~2s) --',
+        ('if exist "' + $GroupDir + '\scripts\install.ps1" ('),
+        '  echo Syncing dsh-extras plugin group...',
+        ('  powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $GroupDir + '\scripts\install.ps1" -SetDefault >> "%USERPROFILE%\.dsh\dsh-extras-install.log" 2>&1'),
+        ')'
+      ) -join $cmdEol
+      $cmdText = $cmdText.Insert($nodeLine.Index, $block + $cmdEol)
+      [System.IO.File]::WriteAllText($cmdPath, $cmdText, (New-Object System.Text.UTF8Encoding($false)))
+      Write-Host '启动器自愈: 已注入 launch-dsh-web.cmd（备份 .bak-before-selfheal）'
+    }
+  }
+}
 Write-Host '完成。下一步：重启 dsh web。'
 Write-Host "  新会话默认 preset: $(if ($SetDefault) { $PresetId } else { '未改动（在 GUI 模式选择里挑，或重跑加 -SetDefault）' })"
 if (-not $SkipPreset) {

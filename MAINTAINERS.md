@@ -50,7 +50,7 @@ powershell -File scripts/install.ps1 -SetDefault   # 装 preset + 接 profile，
 
 1. **agent 作用域**：把随包 `standard` preset 复制到 `$DSH_HOME/.agent-presets/standard-extras`，
    把 `- id: tool-ask-user` 行的 `name` 改成 `'./plugins/ask-detail/index.js'`，并把插件与
-   它需要的 `node_modules/@deepseek-ai/dsh-tools` junction 一并放进 preset 目录。
+   插件本体一并复制进 preset 目录（插件零依赖，preset 里**不需要** node_modules）。
 2. **profile 作用域**：给三个成员（组本身 + 重启按钮 + 关机按钮）都建 `node_modules` junction
    并写成 `link:` 依赖 —— 组的补丁层按**包名** insert 成员，解析不到就启动失败；然后把
    `dsh-extras` 写进 `dsh.profile.bundles`（替掉原来的 `dsh-restart-button`），并清空 profile
@@ -135,10 +135,11 @@ powershell -File dsh-extras\scripts\install.ps1 -SetDefault
 |---|---|
 | `$DSH_HOME\.agent-presets\standard-extras\agent.cordis.yml` | 从**新机器**的随包 `standard` 重新生成，只改 `tool-ask-user` 一行 |
 | 同目录 `plugins\ask-detail\` | 从本组 `plugins\ask-detail\` 复制 |
-| 同目录 `node_modules\@deepseek-ai\dsh-tools` | junction → **新机器**的当前安装 |
+| 同目录 |（插件零依赖，preset 里**没有** node_modules） |
 | `profiles\web\package.json` | 三个成员都补成 `link:` 依赖，`bundles` 只留 `dsh-extras` |
 | `profiles\web\node_modules\{dsh-extras,dsh-restart-button,dsh-shutdown-button}` | junction → 本组目录 / 本组 `plugins\` 下的成员 |
 | `settings.yaml` 的 `agent-presets.default` | `standard-extras`（`-SetDefault` 时） |
+| `$DSH_HOME\dsh-tray.ps1`、`launch-dsh-web.cmd` | 注入「启动前自愈」（幂等；首次改动前备份 `.bak-before-selfheal`，语法检查失败自动回滚） |
 
 成员包缺一个就会**启动失败**（组的补丁层无条件 insert 它们），所以脚本对缺失的成员直接报错，
 而不是留个坏掉的 profile 给你。只想少装某个成员时，请同时从 `cordis.patch.yml` 里删掉对应行。
@@ -152,7 +153,7 @@ powershell -File dsh-extras\scripts\install.ps1 -SetDefault
 powershell -File scripts/verify.ps1     # 只读、免提权；打印 PASS/FAIL 汇总，有失败则退出码 1
 ```
 
-它查三层：agent preset（组合文件那一行 / 插件文件 / dsh-tools junction / 能否真的 import）、
+它查三层：agent preset（组合文件那一行 / 插件文件 / 是否零依赖 / 能否真的 import）、
 profile 接线（bundles 列表、三个成员的 junction 与 `link:` 依赖、成员入口与客户端半边可达）、
 运行中宿主（两个按钮的路由），外加一项 BOM 守卫。
 
@@ -314,3 +315,18 @@ PS 5.1 的 `Remove-Item -Recurse -Force` 作用在含 junction 的目录上时�
 ```powershell
 [System.IO.Directory]::Delete($link, $false)   # 只删链接本身，不递归
 ```
+
+
+### 坑六：文本手术的两个陷阱（改 `install.ps1` 的注入逻辑时必看）
+
+1. **数组字面量里逗号的优先级高于 `+`**。写成
+
+   ```powershell
+   @( 'rem ...', 'if exist "' + $GroupDir + '\scripts\install.ps1" (', ... )
+   ```
+
+   会被解析成 `('rem ...','if exist "') + $GroupDir + ('\scripts...', ...)` —— 数组被展平，
+   `-join` 再给每段加换行，于是**路径被切成多行**（注入进启动脚本后直接失效）。
+   每个拼接都要自己加括号：`('if exist "' + $GroupDir + '...')`。
+2. **插入了文本之后，之前算好的字符偏移全部失效**。注入函数改变了长度，再用旧的 `Match.Index`
+   去 `Insert` 调用点，就会把调用插进别的行中间（踩过一次）。**在改动后的新文本上重新匹配**再插入。

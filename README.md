@@ -45,6 +45,7 @@ powershell -File scripts\install.ps1 -SetDefault
 
 把仓库地址交给 agent：它会 clone（机器上没有 git 时，用 GitHub 上的 **Download ZIP** 代替），
 再跑一次安装器；**你只需要点一次重启**。
+安装器还会把「启动前自愈」注入启动脚本（幂等、首次改动前自动备份），所以新机器上的自动修复能力也一并就位。
 
 原理、排障与设计取舍都写在 [MAINTAINERS.md](MAINTAINERS.md)。
 
