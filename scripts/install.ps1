@@ -268,6 +268,8 @@ if ($SetDefault) {
 
 Write-Host ''
 # ══ D. 启动器自愈：让「起 dsh 之前先跑一次本安装器」这件事跟着仓库走 ═══════════
+# 注意注入的命令**不带 -SetDefault**：自愈只修接线，不该管「默认 preset 是哪个」；
+# 否则你手动切回随包 standard 后，下次冷启动又会被改回来。首次安装时设一次就够。
 # 为什么需要：dsh 升级换了 node 版本槽、仓库被挪过位置、junction 断裂、bundles 被
 # `dsh plugin add` 的 reconcile 弄乱 —— 这些在**启动时**修最合适（preset 与 junction
 # 都是启动时才被读取的）。所以把一次幂等的安装器调用注入启动脚本。
@@ -317,7 +319,7 @@ if (-not $SkipLauncher) {
         '    try {',
         '        $psi = New-Object System.Diagnostics.ProcessStartInfo',
         '        $psi.FileName               = Join-Path $env:SystemRoot ''System32\WindowsPowerShell\v1.0\powershell.exe''',
-        '        $psi.Arguments              = ''-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'' + $installer + ''" -SetDefault''',
+        '        $psi.Arguments              = ''-NoProfile -NonInteractive -ExecutionPolicy Bypass -File "'' + $installer + ''"''',
         '        $psi.UseShellExecute        = $false',
         '        $psi.CreateNoWindow         = $true',
         '        $psi.RedirectStandardOutput = $true',
@@ -389,7 +391,7 @@ if (-not $SkipLauncher) {
         'rem -- dsh-extras self-heal: sync the plugin group before starting dsh (idempotent, ~2s) --',
         ('if exist "' + $GroupDir + '\scripts\install.ps1" ('),
         '  echo Syncing dsh-extras plugin group...',
-        ('  powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $GroupDir + '\scripts\install.ps1" -SetDefault >> "%USERPROFILE%\.dsh\dsh-extras-install.log" 2>&1'),
+        ('  powershell -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "' + $GroupDir + '\scripts\install.ps1" >> "%USERPROFILE%\.dsh\dsh-extras-install.log" 2>&1'),
         ')'
       ) -join $cmdEol
       $cmdText = $cmdText.Insert($nodeLine.Index, $block + $cmdEol)
